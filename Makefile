@@ -9,7 +9,7 @@ spiral_generative.mp4 spiral_hybrid.mp4 spiral_discriminative.mp4: spiral.py
 		-vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" \
 		-crf 25 \
 		-pix_fmt yuv420p \
-		spiral_generative.mp4
+		videos/spiral_generative.mp4
 	ffmpeg -y \
 		-r 2 \
 		-f image2 \
@@ -19,7 +19,7 @@ spiral_generative.mp4 spiral_hybrid.mp4 spiral_discriminative.mp4: spiral.py
 		-vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" \
 		-crf 25 \
 		-pix_fmt yuv420p \
-		spiral_hybrid.mp4
+		videos/spiral_hybrid.mp4
 	ffmpeg -y \
 		-r 2 \
 		-f image2 \
@@ -29,4 +29,4 @@ spiral_generative.mp4 spiral_hybrid.mp4 spiral_discriminative.mp4: spiral.py
 		-vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" \
 		-crf 25 \
 		-pix_fmt yuv420p \
-		spiral_discriminative.mp4
+		videos/spiral_discriminative.mp4

@@ -1,6 +1,10 @@
-# How to set up `torch_xla`
+## Results
 
-## With Pip
+See [`videos`](https://github.com/nalzok/generative-distribution-shift/tree/main/videos).
+
+## How to set up `torch_xla`
+
+### With Pip
 
 ```bash
 pip install --upgrade pip
@@ -9,7 +13,7 @@ pip install torch==1.12.0
 pip install https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.12-cp38-cp38-linux_x86_64.whl
 ```
 
-## With Pipenv
+### With Pipenv
 
 First, run `pipenv --python 3.8` to initialize a virtual environment with Python 3.8.
 This is because `torch_xla` only builds wheels for Python 3.8.
