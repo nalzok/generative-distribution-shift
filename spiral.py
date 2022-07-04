@@ -57,10 +57,10 @@ def init_params(key, C, K, D, R):
 
 
 @jax.jit
-def llk_hybrid(params, X, y, regularizer):
+def llk_hybrid(params, X, y, lambda_):
     """
-    Joint log-likelihood when regularizer = 0
-    Conditional log-likelihood when regularizer = 1
+    Joint log-likelihood when lambda_ = 0
+    Conditional log-likelihood when lambda_ = 1
     """
     pi = jax.nn.softmax(params['pi_logit'])
     alpha = jax.nn.softmax(params['alpha_logit'])
@@ -72,40 +72,66 @@ def llk_hybrid(params, X, y, regularizer):
     Psi = jax.vmap(jax.vmap(jnp.diag))(Psi)
     Sigma = jax.numpy.eye(D) + Psi + jax.vmap(jax.vmap(jnp.matmul))(S, S.swapaxes(-1, -2))
 
-    mvn = jax.vmap(jax.vmap(jsp.stats.multivariate_normal.pdf, (None, 0, 0)), (None, 0, 0))
-    likelihood_cluster = mvn(X, mu, Sigma).transpose((2, 0, 1))
+    # Labelled
+    likelihood_cluster = jsp.stats.multivariate_normal.pdf(X[:, np.newaxis, np.newaxis, :], mu, Sigma)
     likelihood_class = jnp.sum(alpha * likelihood_cluster, axis=-1)
-    llk = jnp.log(pi[y] * likelihood_class[jnp.arange(y.size), y]) - regularizer * jnp.log(jnp.sum(pi * likelihood_class, axis=-1))
+    llk = jnp.log(pi[y] * likelihood_class[jnp.arange(y.size), y]) - lambda_ * jnp.log(jnp.sum(pi * likelihood_class, axis=-1))
+
+    return llk
+
+
+def llk_unlabelled(params, unlabelled, kappa):
+    pi = jax.nn.softmax(params['pi_logit'])
+    alpha = jax.nn.softmax(params['alpha_logit'])
+    mu = params['mu']
+    Psi = jax.nn.softplus(params['Psi_softplus'])
+    S = params['S']
+
+    _, _, D, _ = S.shape
+    Psi = jax.vmap(jax.vmap(jnp.diag))(Psi)
+    Sigma = jax.numpy.eye(D) + Psi + jax.vmap(jax.vmap(jnp.matmul))(S, S.swapaxes(-1, -2))
+
+    # Unlabelled
+    likelihood_cluster_unlabelled = jsp.stats.multivariate_normal.pdf(unlabelled[:, np.newaxis, np.newaxis, :], mu, Sigma)
+    likelihood_class_unlabelled = jnp.sum(alpha * likelihood_cluster_unlabelled, axis=-1)
+    llk = kappa * jnp.log(jnp.sum(pi * likelihood_class_unlabelled, axis=-1))
 
     return llk
 
 
 @jax.value_and_grad
-def objective_hybrid(params, X, y, regularizer):
-    llk = llk_hybrid(params, X, y, regularizer)
+def objective_hybrid(params, X, y, lambda_, unlabelled, kappa):
+    llk = llk_hybrid(params, X, y, lambda_) + llk_unlabelled(params, unlabelled, kappa)
     return -jnp.sum(llk)
 
 
 @jax.jit
-def train_step(params, opt_state, X, y, regularizer):
-    llk_val, grads = objective_hybrid(params, X, y, regularizer)
+def train_step(params, opt_state, X, y, lambda_, unlabelled, kappa):
+    llk_val, grads = objective_hybrid(params, X, y, lambda_, unlabelled, kappa)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
     return llk_val, params, opt_state
 
 
 config = {
-    'generative': 0,
-    'hybrid': 0.5,
-    'discriminative': 1,
+    'generative': (0, 0),
+    'hybrid': (0.5, 0),
+    'discriminative': (1, 0),
+    'generative_ssl': (0, 1),
+    'hybrid_ssl': (0.5, 1),
+    'discriminative_ssl': (1, 1),
 }
 
 if __name__ == '__main__':
     C, K, D, R = 2, 7, 2, 2
-    key = jax.random.PRNGKey(42)
+    sample_size = 500
+    batch_size = 64
+    report_every = 500
 
-    data_key, key = jax.random.split(key)
-    X, y = get_spiral(data_key, 500, 0.5)
+    key = jax.random.PRNGKey(42)
+    labelled_key, unlabelled_key, key = jax.random.split(key, 3)
+    X, y = get_spiral(labelled_key, sample_size, 0.5)
+    unlabelled, _ = get_spiral(unlabelled_key, sample_size, 0.5)
 
     gm = GaussianMixture(K, max_iter=0, random_state=42)
     mu = np.empty((C, K, D))
@@ -114,7 +140,7 @@ if __name__ == '__main__':
         mu[cls, :] = gm.means_
     mu = jnp.array(mu)
 
-    for reg_name, regularizer in config.items():
+    for reg_name, (lambda_, kappa) in config.items():
         print(f'=== {reg_name} ===')
 
         params_key, key = jax.random.split(key)
@@ -131,9 +157,14 @@ if __name__ == '__main__':
         tx = optax.adam(learning_rate=5e-4)
         opt_state = tx.init(params)
 
-        report_every = 500
         for i in range(10001):
-            llk_val, params, opt_state = train_step(params, opt_state, X, y, regularizer)
+            llk_val = 0
+            for batch_id in range(0, sample_size, batch_size):
+                slice_batch = slice(batch_id, batch_id+batch_size)
+                X_batch, y_batch, unlabelled_batch = X[slice_batch], y[slice_batch], unlabelled[slice_batch]
+                llk_val_batch, params, opt_state = train_step(params, opt_state, X_batch, y_batch, lambda_, unlabelled_batch, kappa)
+                llk_val += llk_val_batch
+
             if i % report_every == 0:
                 print(f'Iteration {i}: {llk_val}')
 
@@ -150,7 +181,7 @@ if __name__ == '__main__':
                 alpha = jax.nn.softmax(params['alpha_logit'])
                 llk = np.empty((C, xnew.shape[0]))
                 for cls in range(C):
-                    llk[cls, :] = llk_hybrid(params, xnew, cls * jnp.ones(xnew.shape[:1], dtype=int), regularizer)
+                    llk[cls, :] = llk_hybrid(params, xnew, cls * jnp.ones(xnew.shape[:1], dtype=int), lambda_)
                     axes[cls].pcolormesh(xx, yy, llk[cls, :].reshape(xx.shape))
                     axes[cls].scatter(X[y == cls, 0], X[y == cls, 1], marker='.')
                     axes[cls].scatter(centroids[cls, :, 0], centroids[cls, :, 1], marker='*', s=15*K*alpha[cls, :])
