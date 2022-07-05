@@ -11,6 +11,7 @@ numpy = "<1.23"     # https://github.com/google/jax/issues/11221
 matplotlib = "*"
 optax = "*"
 scikit-learn = "*"
+flax = "*"
 
 [dev-packages]
 
