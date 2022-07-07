@@ -49,20 +49,22 @@ def lk_class(params, X):
     return likelihood_class
 
 
-@jax.jit
-def llk_hybrid(params, X, y, lambda_):
+def llk_hybrid(params, X, y):
     """
     Joint log-likelihood when lambda_ = 0
     Conditional log-likelihood when lambda_ = 1
     """
     pi = jax.nn.softmax(params['pi_logit'])
     likelihood_class = lk_class(params, X)
-    llk = jnp.log(pi[y] * likelihood_class[jnp.arange(y.size), y]) - lambda_ * jnp.log(jnp.sum(pi * likelihood_class, axis=-1))
 
-    return llk
+    joint_llk = jnp.log(pi[y] * likelihood_class[jnp.arange(y.size), y])
+    marginal_llk = jnp.log(jnp.sum(pi * likelihood_class, axis=-1))
+    cond_llk = joint_llk - marginal_llk
+
+    return joint_llk, cond_llk
 
 
-def llk_unlabelled(params, unlabelled, kappa):
+def llk_unlabelled(params, unlabelled):
     pi = jax.nn.softmax(params['pi_logit'])
     alpha = jax.nn.softmax(params['alpha_logit'])
     mu = params['mu']
@@ -75,15 +77,18 @@ def llk_unlabelled(params, unlabelled, kappa):
 
     likelihood_cluster_unlabelled = jsp.stats.multivariate_normal.pdf(unlabelled[:, np.newaxis, np.newaxis, :], mu, Sigma)
     likelihood_class_unlabelled = jnp.sum(alpha * likelihood_cluster_unlabelled, axis=-1)
-    llk = kappa * jnp.log(jnp.sum(pi * likelihood_class_unlabelled, axis=-1))
+    llk = jnp.log(jnp.sum(pi * likelihood_class_unlabelled, axis=-1))
 
     return llk
 
 
 @jax.value_and_grad
 def objective_hybrid(params, X, y, lambda_, unlabelled, kappa):
-    llk = llk_hybrid(params, X, y, lambda_) + llk_unlabelled(params, unlabelled, kappa)
-    return -jnp.sum(llk)
+    joint_llk, cond_llk = llk_hybrid(params, X, y)
+    unlabelled_llk = llk_unlabelled(params, unlabelled)
+    llk = lambda_ * (kappa * jnp.sum(joint_llk) + (1 - kappa) * jnp.sum(unlabelled_llk)) + (1 - lambda_) * jnp.sum(cond_llk)
+
+    return -llk
 
 
 @partial(jax.jit, static_argnums=2)
@@ -91,6 +96,10 @@ def train_step(params, opt_state, tx, X, y, lambda_, unlabelled, kappa):
     llk_val, grads = objective_hybrid(params, X, y, lambda_, unlabelled, kappa)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
+
+    params['pi_logit'] = params['pi_logit'] - jnp.mean(params['pi_logit'], axis=-1, keepdims=True)
+    params['alpha_logit'] = params['alpha_logit'] - jnp.mean(params['alpha_logit'], axis=-1, keepdims=True)
+
     return llk_val, params, opt_state
 
 
@@ -114,18 +123,25 @@ class GMM:
         self.kappa = kappa
 
 
-    def fit(self, sample_size, batch_size, report_every, X, y, unlabelled, X_valid, y_valid):
-        for i in range(10001):
+    def fit(self, epochs, report_every, batches_per_epoch, X, y, unlabelled, X_valid, y_valid):
+        labelled_batch_size = (X.shape[0] + batches_per_epoch - 1) // batches_per_epoch
+        unlabelled_batch_size = (unlabelled.shape[0] + batches_per_epoch - 1) // batches_per_epoch
+
+        for i in range(epochs):
+            labelled_iter = range(0, X.shape[0], labelled_batch_size)
+            unlabelled_iter = range(0, unlabelled.shape[0], unlabelled_batch_size)
+
             llk_val = 0
-            for batch_id in range(0, sample_size, batch_size):
-                slice_batch = slice(batch_id, batch_id+batch_size)
-                X_batch, y_batch, unlabelled_batch = X[slice_batch], y[slice_batch], unlabelled[slice_batch]
+            for labelled_batch_id, unlabelled_batch_id in zip(labelled_iter, unlabelled_iter):
+                labelled_slice = slice(labelled_batch_id, labelled_batch_id+labelled_batch_size)
+                unlabelled_slice = slice(unlabelled_batch_id, unlabelled_batch_id+unlabelled_batch_size)
+                X_batch, y_batch, unlabelled_batch = X[labelled_slice], y[labelled_slice], unlabelled[unlabelled_slice]
                 llk_val_batch, self.params, self.opt_state = train_step(self.params, self.opt_state, self.tx, X_batch, y_batch, self.lambda_, unlabelled_batch, self.kappa)
                 llk_val += llk_val_batch
 
             if i % report_every == 0:
                 correct_cases = self.evaluate(X_valid, y_valid)
-                print(f'Iteration {i}: train loss {llk_val}, validation accuracy {100*correct_cases/sample_size:.2f}%')
+                print(f'Iteration {i}: train loss {llk_val}, validation accuracy {100*correct_cases/X_valid.shape[0]:.2f}%')
 
 
     def evaluate(self, X_valid, y_valid):
