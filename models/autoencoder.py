@@ -77,11 +77,14 @@ class AutoEncoder(nn.Module):
     embedding_dim: int
     output_dim: Tuple[int, int, int]
 
-    @nn.compact
+    def setup(self):
+        self.encoder = Encoder(self.embedding_dim)
+        self.decoder = Decoder(self.output_dim)
+
     def __call__(self, X, training):
-        X = Encoder(self.embedding_dim)(X, training)
-        X = Decoder(self.output_dim)(X, training)
-        return X
+        embedding = self.encoder(X, training)
+        X = self.decoder(embedding, training)
+        return embedding, X
 
 
 def create_train_state(key, embedding_dim, learning_rate, specimen):
@@ -103,7 +106,7 @@ def train_step(state, image):
     @partial(jax.value_and_grad, has_aux=True)
     def loss_fn(params):
         variables = {'params': params, 'batch_stats': state.batch_stats}
-        reconstructed, new_model_state = state.apply_fn(
+        (_, reconstructed), new_model_state = state.apply_fn(
             variables, image, True, mutable=['batch_stats']
         )
         loss = jnp.sum((reconstructed - image)**2)
@@ -122,20 +125,20 @@ def train_step(state, image):
 @jax.jit
 def test_step(state, image):
     variables = {'params': state.params, 'batch_stats': state.batch_stats}
-    reconstructed = state.apply_fn(variables, image, False)
+    embedding, reconstructed = state.apply_fn(variables, image, False)
 
-    return reconstructed
+    return embedding, reconstructed
 
 
-class FeatureExtractor:
-    def __init__(self, key, embedding_dim, lr, specimen, ckpt_dir = None):
+class AutoEncoderModel:
+    def __init__(self, key, embedding_dim, lr, specimen, ckpt_dir_in = None):
         self.state = create_train_state(key, embedding_dim, lr, specimen)
         self.input_dim = specimen.shape
-        if ckpt_dir is not None:
-            self.state = checkpoints.restore_checkpoint(ckpt_dir, self.state)
+        if ckpt_dir_in is not None:
+            self.state = checkpoints.restore_checkpoint(ckpt_dir_in, self.state)
 
 
-    def fit(self, epochs, batch_size, report_every, train_dataset, ckpt_dir = None):
+    def fit(self, epochs, batch_size, report_every, train_dataset, ckpt_dir_out = None):
         train_loader = DataLoader(train_dataset, batch_size)
         for epoch in range(epochs):
             train_loss = 0 
@@ -147,9 +150,11 @@ class FeatureExtractor:
             if epoch % report_every == 0:
                 print(f'Epoch {epoch}: train loss {train_loss}')
 
-            if ckpt_dir is not None:
-                checkpoints.save_checkpoint(ckpt_dir, self.state, epoch, overwrite=True)
+            if ckpt_dir_out is not None:
+                checkpoints.save_checkpoint(ckpt_dir_out, self.state, epoch, overwrite=True)
 
 
     def __call__(self, X):
-        return test_step(self.state, X)
+        embedding, reconstructed = test_step(self.state, X)
+
+        return embedding, reconstructed

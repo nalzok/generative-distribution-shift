@@ -105,8 +105,14 @@ def train_step(params, opt_state, tx, X, y, lambda_, unlabelled, kappa):
 
 @jax.jit
 def test_step(params, X, y):
+    prior = jax.nn.softmax(params['pi_logit'])
     likelihood_class = lk_class(params, X)
-    predictions = jnp.argmax(likelihood_class, axis=-1)
+
+    normalizer = jnp.max(likelihood_class, axis=-1)
+    posterior = prior * (likelihood_class / normalizer)
+    posterior /= jnp.sum(posterior, axis=-1)
+
+    predictions = jnp.argmax(posterior, axis=-1)
     correct_cases = jnp.sum(predictions == y)
     return correct_cases
 
