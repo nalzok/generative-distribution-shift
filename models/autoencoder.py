@@ -134,8 +134,10 @@ class AutoEncoderModel:
     def __init__(self, key, embedding_dim, lr, specimen, ckpt_dir_in = None):
         self.state = create_train_state(key, embedding_dim, lr, specimen)
         self.input_dim = specimen.shape
+        self.embedding_dim = embedding_dim
         if ckpt_dir_in is not None:
-            self.state = checkpoints.restore_checkpoint(ckpt_dir_in, self.state)
+            self.state = checkpoints.restore_checkpoint(ckpt_dir_in, self.state,
+                    prefix=f'autoencoder_{self.embedding_dim}_')
 
 
     def fit(self, epochs, batch_size, report_every, train_dataset, ckpt_dir_out = None):
@@ -151,7 +153,8 @@ class AutoEncoderModel:
                 print(f'Epoch {epoch}: train loss {train_loss}')
 
             if ckpt_dir_out is not None:
-                checkpoints.save_checkpoint(ckpt_dir_out, self.state, epoch, overwrite=True)
+                checkpoints.save_checkpoint(ckpt_dir_out, self.state, epoch,
+                        prefix=f'autoencoder_{self.embedding_dim}_', overwrite=True)
 
 
     def __call__(self, X):

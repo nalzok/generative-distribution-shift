@@ -16,6 +16,8 @@ flax = "*"
 tensorflow-cpu = "*"
 
 [dev-packages]
+jupyterlab = "*"
+ipywidgets = "*"
 
 [requires]
 python_version = "3.8"
