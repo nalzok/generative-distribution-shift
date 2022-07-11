@@ -14,7 +14,6 @@ import optax
 import flax
 import flax.linen as nn
 from flax.training import train_state, checkpoints
-from torch.utils.data import DataLoader
 
 
 class TrainState(train_state.TrainState):
@@ -140,8 +139,7 @@ class AutoEncoderModel:
                     prefix=f'autoencoder_{self.embedding_dim}_')
 
 
-    def fit(self, epochs, batch_size, report_every, train_dataset, ckpt_dir_out = None):
-        train_loader = DataLoader(train_dataset, batch_size)
+    def fit(self, epochs, report_every, train_loader, ckpt_dir_out = None):
         for epoch in range(epochs):
             train_loss = 0 
             for X, _ in train_loader:
@@ -158,6 +156,12 @@ class AutoEncoderModel:
 
 
     def __call__(self, X):
-        embedding, reconstructed = test_step(self.state, X)
+        embedding, _ = test_step(self.state, X)
 
-        return embedding, reconstructed
+        return embedding
+
+
+    def reconstruct(self, X):
+        _, reconstructed = test_step(self.state, X)
+
+        return reconstructed
