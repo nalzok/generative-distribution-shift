@@ -34,7 +34,7 @@ def init_params(C, K, D, R):
     return params
 
 
-def lk_class(params, X):
+def llk_class(params, X):
     alpha = jax.nn.softmax(params['alpha_logit'])
     mu = params['mu']
     Psi = jax.nn.softplus(params['Psi_softplus'])
@@ -44,11 +44,9 @@ def lk_class(params, X):
     Psi = jax.vmap(jax.vmap(jnp.diag))(Psi)
     Sigma = 1e-3 * jax.numpy.eye(D) + Psi + jax.vmap(jax.vmap(jnp.matmul))(S, S.swapaxes(-1, -2))
 
-    likelihood_cluster = jsp.stats.multivariate_normal.pdf(X[:, np.newaxis, np.newaxis, :], mu, Sigma)
-    log_likelihood_cluster = jsp.stats.multivariate_normal.logpdf(X[:, np.newaxis, np.newaxis, :], mu, Sigma)
-    likelihood_class = jnp.sum(alpha * likelihood_cluster, axis=-1)
-
-    return likelihood_class
+    cluster_llk = jsp.stats.multivariate_normal.logpdf(X[:, np.newaxis, np.newaxis, :], mu, Sigma)
+    class_llk = jsp.special.logsumexp(cluster_llk, b=alpha, axis=-1)
+    return class_llk
 
 
 def llk_hybrid(params, X, y):
@@ -57,45 +55,35 @@ def llk_hybrid(params, X, y):
     Conditional log-likelihood when lambda_ = 1
     """
     pi = jax.nn.softmax(params['pi_logit'])
-    likelihood_class = lk_class(params, X)
+    class_llk = llk_class(params, X)
 
-    joint_llk = jnp.log(pi[y] * likelihood_class[jnp.arange(y.size), y])
-    marginal_llk = jnp.log(jnp.sum(pi * likelihood_class, axis=-1))
+    joint_llk = jnp.log(pi[y]) + class_llk[jnp.arange(y.size), y]
+    marginal_llk = jsp.special.logsumexp(class_llk, b=pi, axis=-1)
     cond_llk = joint_llk - marginal_llk
 
     return joint_llk, cond_llk
 
 
-def llk_unlabelled(params, unlabelled):
+def llk_unlabeled(params, unlabeled):
     pi = jax.nn.softmax(params['pi_logit'])
-    alpha = jax.nn.softmax(params['alpha_logit'])
-    mu = params['mu']
-    Psi = jax.nn.softplus(params['Psi_softplus'])
-    S = params['S']
-
-    _, _, D, _ = S.shape
-    Psi = jax.vmap(jax.vmap(jnp.diag))(Psi)
-    Sigma = jax.numpy.eye(D) + Psi + jax.vmap(jax.vmap(jnp.matmul))(S, S.swapaxes(-1, -2))
-
-    likelihood_cluster_unlabelled = jsp.stats.multivariate_normal.pdf(unlabelled[:, np.newaxis, np.newaxis, :], mu, Sigma)
-    likelihood_class_unlabelled = jnp.sum(alpha * likelihood_cluster_unlabelled, axis=-1)
-    llk = jnp.log(jnp.sum(pi * likelihood_class_unlabelled, axis=-1))
+    class_llk = llk_class(params, unlabeled)
+    llk = jsp.special.logsumexp(class_llk, b=pi, axis=-1)
 
     return llk
 
 
 @jax.value_and_grad
-def objective_hybrid(params, X, y, lambda_, unlabelled, kappa):
+def objective_hybrid(params, X, y, lambda_, unlabeled, kappa):
     joint_llk, cond_llk = llk_hybrid(params, X, y)
-    unlabelled_llk = llk_unlabelled(params, unlabelled)
-    llk = lambda_ * (kappa * jnp.sum(joint_llk) + (1 - kappa) * jnp.sum(unlabelled_llk)) + (1 - lambda_) * jnp.sum(cond_llk)
+    unlabeled_llk = llk_unlabeled(params, unlabeled)
+    llk = lambda_ * (kappa * jnp.sum(joint_llk) + (1 - kappa) * jnp.sum(unlabeled_llk)) + (1 - lambda_) * jnp.sum(cond_llk)
 
     return -llk
 
 
-# @partial(jax.jit, static_argnums=2)
-def train_step(params, opt_state, tx, X, y, lambda_, unlabelled, kappa):
-    llk_val, grads = objective_hybrid(params, X, y, lambda_, unlabelled, kappa)
+@partial(jax.jit, static_argnums=2)
+def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
+    llk_val, grads = objective_hybrid(params, X, y, lambda_, unlabeled, kappa)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
@@ -105,13 +93,12 @@ def train_step(params, opt_state, tx, X, y, lambda_, unlabelled, kappa):
 @jax.jit
 def test_step(params, X, y):
     prior = jax.nn.softmax(params['pi_logit'])
-    likelihood_class = lk_class(params, X)
+    class_llk = llk_class(params, X)
 
-    normalizer = jnp.max(likelihood_class, axis=-1)
-    posterior = prior * (likelihood_class / normalizer)
-    posterior /= jnp.sum(posterior, axis=-1)
+    log_posterior = jnp.log(prior) + class_llk
+    log_posterior -= jsp.special.logsumexp(class_llk, b=prior, axis=-1, keepdims=True)  # normalize
 
-    predictions = jnp.argmax(posterior, axis=-1)
+    predictions = jnp.argmax(log_posterior, axis=-1)
     correct_cases = jnp.sum(predictions == y)
     return correct_cases
 

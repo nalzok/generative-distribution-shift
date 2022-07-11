@@ -34,14 +34,14 @@ if __name__ == '__main__':
     unlabeled_dataset = Subset(train_dataset, np.flatnonzero(~mask))
 
     # GMM
-    C, K, D, R = 10, 2, embedding_dim, 2
-    gmm_lr = 5e-4
+    C, K, D, R = 10, 3, embedding_dim, 2
+    gmm_lr = 1e-5
     lambda_, kappa = 0.5, 0.5
 
     gmm = GMM(C, K, D, R, gmm_lr, lambda_, kappa)
     # FIXME: load weights from checkpoint
 
-    epochs = 28
+    epochs = 55
     report_every = 3
     batch_size = 64
 
