@@ -115,12 +115,12 @@ class Tent:
         self.state = create_train_state(key, num_classes, lr, tent_lr, specimen)
 
 
-    def fit(self, sample_size, batch_size, report_every, X, y, unlabelled, X_valid, y_valid):
+    def fit(self, sample_size, batch_size, report_every, X, y, unlabeled, X_valid, y_valid):
         for i in range(10001):
             llk_val = 0
             for batch_id in range(0, sample_size, batch_size):
                 slice_batch = slice(batch_id, batch_id+batch_size)
-                X_batch, y_batch, unlabelled_batch = X[slice_batch], y[slice_batch], unlabelled[slice_batch]
+                X_batch, y_batch, unlabeled_batch = X[slice_batch], y[slice_batch], unlabeled[slice_batch]
                 llk_val_batch, self.params, self.opt_state = train_step(self.params, X_batch, y_batch)
                 llk_val += llk_val_batch
 

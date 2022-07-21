@@ -5,6 +5,8 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 import optax
+from flax.training import checkpoints
+
 from sklearn.mixture import GaussianMixture
 from tqdm import tqdm
 
@@ -81,7 +83,7 @@ def objective_hybrid(params, X, y, lambda_, unlabeled, kappa):
     return -llk
 
 
-@partial(jax.jit, static_argnums=2)
+@partial(jax.jit, static_argnums=(2,))
 def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
     llk_val, grads = objective_hybrid(params, X, y, lambda_, unlabeled, kappa)
     updates, opt_state = tx.update(grads, opt_state)
@@ -91,7 +93,7 @@ def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
 
 
 @jax.jit
-def test_step(params, X, y):
+def valid_step(params, X, y):
     prior = jax.nn.softmax(params['pi_logit'])
     class_llk = llk_class(params, X)
 
@@ -104,21 +106,30 @@ def test_step(params, X, y):
 
 
 class GMM:
-    def __init__(self, C, K, D, R, lr, lambda_, kappa):
-        self.params = init_params(C, K, D, R)
+    def __init__(self, C, K, D, R, lr, lambda_, kappa, metadata, ckpt_dir_in = None):
         self.C = C
         self.K = K
         self.D = D
         self.R = R
+        self.lambda_ = lambda_
+        self.kappa = kappa
+        self.prefix = f'gmm_{metadata}_K{K}_R{R}_lr{lr}_lambda{lambda_}_kappa{kappa}_'
+
+        self.params = init_params(C, K, D, R)
+        if ckpt_dir_in is not None:
+            restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.params, prefix=self.prefix)
+            if restored is self.params:
+                raise ValueError(f'Cannot find checkpoint {self.prefix}_X')
+            self.params = restored
 
         self.tx = optax.adam(learning_rate=lr)
         self.opt_state = self.tx.init(self.params)
 
-        self.lambda_ = lambda_
-        self.kappa = kappa
 
+    def fit(self, ckpt_dir_out, epochs, labeled_loader, unlabeled_loader, valid_loader = None):
+        if valid_loader is None:
+            valid_loader = labeled_loader
 
-    def fit(self, epochs, report_every, labeled_loader, unlabeled_loader, valid_loader):
         # Initialize cluster means with K-means++
         gm = [GaussianMixture(self.K, max_iter=0, init_params='k-means++', random_state=42)
                 for _ in range(self.C)]
@@ -131,25 +142,31 @@ class GMM:
                 if samples >= self.K:
                     gm[cls].fit(X_batch[mask, :])
                 if samples >= 2:
+                    # TODO: use a better heuristic
                     weight = samples / X_batch.shape[0]
                     Sigma[cls, :, :] = (1-weight) * Sigma[cls, :, :] + weight * np.cov(X_batch[mask, :], rowvar=False)
 
-        mu = np.empty((self.C, self.K, self.D))
+        rng = np.random.default_rng(42)
+        mu = rng.normal(size=(self.C, self.K, self.D))
         for cls in range(self.C):
-            mu[cls, :] = gm[cls].means_
+            if hasattr(gm[cls], 'means_'):
+                mu[cls, :, :] = gm[cls].means_
 
-        Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1)
+        # We are double counting the diagonal, but that's fine since it's just an initial guess
+        Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1) / 2
         Psi_softplus = np.repeat(Psi_softplus[:, np.newaxis, :], self.K, axis=1)
-        w, v = np.linalg.eig(Sigma)
-        sig = np.sqrt(w[:, :self.R])
-        S = sig[:, np.newaxis, :] * v[:, :, :self.R]
+
+        w, v = np.linalg.eigh(Sigma)
+        w = np.maximum(w, 0)                # avoid numerical issue
+        sigval = np.sqrt(w[:, -self.R:])    # numpy sorts eigenvalues in ascending order
+        S = sigval[:, np.newaxis, :] * v[:, :, -self.R:]
         S = np.repeat(S[:, np.newaxis, :, :], self.K, axis=1)
 
         self.params['mu'] = jnp.array(mu)
         self.params['Psi_softplus'] = jnp.array(Psi_softplus)
         self.params['S'] = jnp.array(S)
 
-        for i in range(epochs):
+        for epoch in range(epochs):
             llk_val = 0
             pbar = tqdm(zip(labeled_loader, unlabeled_loader))
             for (X_batch, y_batch), (unlabeled_batch, _) in pbar:
@@ -161,22 +178,21 @@ class GMM:
                 llk_val += llk_val_batch
                 pbar.set_description(f"{llk_val_batch.item()=:.2f}")
 
-            if i % report_every == 0:
-                correct_cases = 0
-                total_cases = 0
-                for X_batch, y_batch in valid_loader:
-                    X_batch = jnp.array(X_batch)
-                    y_batch = jnp.array(y_batch)
-                    correct_cases += self.evaluate(X_batch, y_batch)
-                    total_cases += X_batch.shape[0]
+            correct_cases, total_cases = self.evaluate(valid_loader)
 
-                print(f'Iteration {i}: train loss {llk_val}, validation accuracy {100*correct_cases/total_cases:.2f}%')
+            print(f'GMM: epoch {epoch}: train loss {llk_val}, valid accuracy {100*correct_cases/total_cases:.2f}%')
+
+            checkpoints.save_checkpoint(ckpt_dir_out, self.params, correct_cases/total_cases,
+                    prefix=self.prefix, overwrite=True)
 
 
-    def predict(self, X_pred):
-        pass
+    def evaluate(self, valid_loader):
+        correct_cases = 0
+        total_cases = 0
+        for X_batch, y_batch in valid_loader:
+            X_batch = jnp.array(X_batch)
+            y_batch = jnp.array(y_batch)
+            correct_cases += valid_step(self.params, X_batch, y_batch)
+            total_cases += X_batch.shape[0]
 
-
-    def evaluate(self, X_valid, y_valid):
-        correct_cases = test_step(self.params, X_valid, y_valid)
-        return correct_cases
+        return correct_cases, total_cases

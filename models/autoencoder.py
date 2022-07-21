@@ -80,10 +80,16 @@ class AutoEncoder(nn.Module):
         self.encoder = Encoder(self.embedding_dim)
         self.decoder = Decoder(self.output_dim)
 
+    def encode(self, X, training):
+        return self.encoder(X, training)
+
+    def decode(self, embedding, training):
+        return self.decoder(embedding, training)
+
     def __call__(self, X, training):
-        embedding = self.encoder(X, training)
-        X = self.decoder(embedding, training)
-        return embedding, X
+        embedding = self.encode(X, training)
+        X = self.decode(embedding, training)
+        return X
 
 
 def create_train_state(key, embedding_dim, learning_rate, specimen):
@@ -105,7 +111,7 @@ def train_step(state, image):
     @partial(jax.value_and_grad, has_aux=True)
     def loss_fn(params):
         variables = {'params': params, 'batch_stats': state.batch_stats}
-        (_, reconstructed), new_model_state = state.apply_fn(
+        reconstructed, new_model_state = state.apply_fn(
             variables, image, True, mutable=['batch_stats']
         )
         loss = jnp.sum((reconstructed - image)**2)
@@ -122,24 +128,30 @@ def train_step(state, image):
 
 
 @jax.jit
-def test_step(state, image):
+def valid_step(state, image):
     variables = {'params': state.params, 'batch_stats': state.batch_stats}
-    embedding, reconstructed = state.apply_fn(variables, image, False)
-
-    return embedding, reconstructed
+    reconstructed = state.apply_fn(variables, image, False)
+    loss = jnp.sum((reconstructed - image)**2)
+    return loss.sum()
 
 
 class AutoEncoderModel:
     def __init__(self, key, embedding_dim, lr, specimen, ckpt_dir_in = None):
         self.state = create_train_state(key, embedding_dim, lr, specimen)
+        self.prefix = f'ae_dim{embedding_dim}_lr{lr}_'
         self.input_dim = specimen.shape
-        self.embedding_dim = embedding_dim
+
         if ckpt_dir_in is not None:
-            self.state = checkpoints.restore_checkpoint(ckpt_dir_in, self.state,
-                    prefix=f'autoencoder_{self.embedding_dim}_')
+            restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.state, prefix=self.prefix)
+            if restored is self.state:
+                raise ValueError(f'Cannot find checkpoint {self.prefix}_X')
+            self.state = restored
 
 
-    def fit(self, epochs, report_every, train_loader, ckpt_dir_out = None):
+    def fit(self, ckpt_dir_out, epochs, train_loader, valid_loader = None):
+        if valid_loader is None:
+            valid_loader = train_loader
+
         for epoch in range(epochs):
             train_loss = 0 
             for X, _ in train_loader:
@@ -147,21 +159,34 @@ class AutoEncoderModel:
                 self.state, loss = train_step(self.state, image)
                 train_loss += loss
 
-            if epoch % report_every == 0:
-                print(f'Epoch {epoch}: train loss {train_loss}')
+            valid_loss = self.evaluate(valid_loader)
 
-            if ckpt_dir_out is not None:
-                checkpoints.save_checkpoint(ckpt_dir_out, self.state, epoch,
-                        prefix=f'autoencoder_{self.embedding_dim}_', overwrite=True)
+            print(f'Autoencoder: epoch {epoch}: train loss {train_loss}, valid loss {valid_loss}')
+
+            checkpoints.save_checkpoint(ckpt_dir_out, self.state, -valid_loss,
+                    prefix=self.prefix, overwrite=True)
 
 
-    def __call__(self, X):
-        embedding, _ = test_step(self.state, X)
+    def evaluate(self, valid_loader):
+        valid_loss = 0
+        for X, _ in valid_loader:
+            image = jnp.array(X).reshape((-1, *self.input_dim))/255.
+            valid_loss += valid_step(self.state, image)
+
+        return valid_loss
+
+
+    @partial(jax.jit, static_argnums=(0,))
+    def embed(self, X):
+        variables = {'params': self.state.params, 'batch_stats': self.state.batch_stats}
+        embedding = self.state.apply_fn(variables, X, False, method=AutoEncoder.encode)
 
         return embedding
 
 
+    @partial(jax.jit, static_argnums=(0,))
     def reconstruct(self, X):
-        _, reconstructed = test_step(self.state, X)
+        variables = {'params': self.state.params, 'batch_stats': self.state.batch_stats}
+        reconstructed = self.state.apply_fn(variables, X, False)
 
         return reconstructed
