@@ -1,0 +1,7 @@
+Seq	Host	Starttime	JobRuntime	Send	Receive	Exitval	Signal	Command
+4	:	1658474525.680	   754.122	0	0	0	0	pipenv run python3 -m mnist.train_ae --embedding_dim 64 --ae_lr 0.001 --epochs 32 --ae_ckpt_dir mnist/ckpts/ae > mnist/logs/ae/ae_dim64_lr0.001.txt
+1	:	1658474525.674	   757.049	0	0	0	0	pipenv run python3 -m mnist.train_ae --embedding_dim 24 --ae_lr 0.001 --epochs 32 --ae_ckpt_dir mnist/ckpts/ae > mnist/logs/ae/ae_dim24_lr0.001.txt
+2	:	1658474525.676	   757.980	0	0	0	0	pipenv run python3 -m mnist.train_ae --embedding_dim 32 --ae_lr 0.001 --epochs 32 --ae_ckpt_dir mnist/ckpts/ae > mnist/logs/ae/ae_dim32_lr0.001.txt
+5	:	1658474525.682	   762.006	0	0	0	0	pipenv run python3 -m mnist.train_ae --embedding_dim 96 --ae_lr 0.001 --epochs 32 --ae_ckpt_dir mnist/ckpts/ae > mnist/logs/ae/ae_dim96_lr0.001.txt
+3	:	1658474525.678	   762.873	0	0	0	0	pipenv run python3 -m mnist.train_ae --embedding_dim 48 --ae_lr 0.001 --epochs 32 --ae_ckpt_dir mnist/ckpts/ae > mnist/logs/ae/ae_dim48_lr0.001.txt
+6	:	1658474525.684	   765.523	0	0	0	0	pipenv run python3 -m mnist.train_ae --embedding_dim 128 --ae_lr 0.001 --epochs 32 --ae_ckpt_dir mnist/ckpts/ae > mnist/logs/ae/ae_dim128_lr0.001.txt

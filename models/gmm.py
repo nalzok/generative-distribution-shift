@@ -6,6 +6,7 @@ import jax.scipy as jsp
 import numpy as np
 import optax
 from flax.training import checkpoints
+import torch
 
 from sklearn.mixture import GaussianMixture
 from tqdm import tqdm
@@ -74,22 +75,26 @@ def llk_unlabeled(params, unlabeled):
     return llk
 
 
-@jax.value_and_grad
+@partial(jax.value_and_grad, has_aux=True)
 def objective_hybrid(params, X, y, lambda_, unlabeled, kappa):
     joint_llk, cond_llk = llk_hybrid(params, X, y)
     unlabeled_llk = llk_unlabeled(params, unlabeled)
-    llk = lambda_ * (kappa * jnp.sum(joint_llk) + (1 - kappa) * jnp.sum(unlabeled_llk)) + (1 - lambda_) * jnp.sum(cond_llk)
 
-    return -llk
+    joint_llk_batch = jnp.sum(joint_llk) / X.shape[1]
+    cond_llk_batch = jnp.sum(cond_llk)
+    unlabeled_llk_batch = jnp.sum(unlabeled_llk) / unlabeled.shape[0] * X.shape[0]
+    llk = lambda_ * (kappa * joint_llk_batch + (1 - kappa) * unlabeled_llk_batch) + (1 - lambda_) * cond_llk_batch
+
+    return -llk, (joint_llk_batch, cond_llk_batch, unlabeled_llk_batch)
 
 
 @partial(jax.jit, static_argnums=(2,))
 def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
-    llk_val, grads = objective_hybrid(params, X, y, lambda_, unlabeled, kappa)
+    (llk_val, llk_breakdown), grads = objective_hybrid(params, X, y, lambda_, unlabeled, kappa)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
-    return llk_val, params, opt_state
+    return llk_val, params, opt_state, llk_breakdown
 
 
 @jax.jit
@@ -126,7 +131,7 @@ class GMM:
         self.opt_state = self.tx.init(self.params)
 
 
-    def fit(self, ckpt_dir_out, epochs, labeled_loader, unlabeled_loader, valid_loader = None):
+    def fit(self, init_scheme, ckpt_dir_out, epochs, labeled_loader, unlabeled_loader, valid_loader = None):
         if valid_loader is None:
             valid_loader = labeled_loader
 
@@ -138,7 +143,7 @@ class GMM:
         for X_batch, y_batch in labeled_loader:
             for cls in range(self.C):
                 mask = y_batch == cls
-                samples = mask.sum()
+                samples = torch.sum(mask)
                 if samples >= self.K:
                     gm[cls].fit(X_batch[mask, :])
                 if samples >= 2:
@@ -152,15 +157,25 @@ class GMM:
             if hasattr(gm[cls], 'means_'):
                 mu[cls, :, :] = gm[cls].means_
 
-        # We are double counting the diagonal, but that's fine since it's just an initial guess
-        Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1) / 2
-        Psi_softplus = np.repeat(Psi_softplus[:, np.newaxis, :], self.K, axis=1)
-
         w, v = np.linalg.eigh(Sigma)
         w = np.maximum(w, 0)                # avoid numerical issue
         sigval = np.sqrt(w[:, -self.R:])    # numpy sorts eigenvalues in ascending order
         S = sigval[:, np.newaxis, :] * v[:, :, -self.R:]
+        residual = Sigma - jax.vmap(jnp.matmul)(S, S.swapaxes(-1, -2))
         S = np.repeat(S[:, np.newaxis, :, :], self.K, axis=1)
+
+        if init_scheme == 'zero':
+            Psi_softplus = np.zeros((self.C, self.D))
+        elif init_scheme == 'roth':
+            Psi_softplus = residual.diagonal(axis1=-2, axis2=-1)
+        elif init_scheme == 'full':
+            Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1)
+        elif init_scheme == 'half':
+            Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1) / 2
+        else:
+            raise ValueError(f'Unknown Initialization scheme {init_scheme}')
+
+        Psi_softplus = np.repeat(Psi_softplus[:, np.newaxis, :], self.K, axis=1)
 
         self.params['mu'] = jnp.array(mu)
         self.params['Psi_softplus'] = jnp.array(Psi_softplus)
@@ -168,19 +183,33 @@ class GMM:
 
         for epoch in range(epochs):
             llk_val = 0
+            joint_llk_val = 0
+            cond_llk_val = 0
+            unlabeled_llk_val = 0
             pbar = tqdm(zip(labeled_loader, unlabeled_loader))
             for (X_batch, y_batch), (unlabeled_batch, _) in pbar:
                 X_batch = jnp.array(X_batch)
                 y_batch = jnp.array(y_batch)
                 unlabeled_batch = jnp.array(unlabeled_batch)
-                llk_val_batch, self.params, self.opt_state = train_step(self.params, self.opt_state, self.tx,
+                llk_val_batch, self.params, self.opt_state, llk_breakdown = train_step(self.params, self.opt_state, self.tx,
                         X_batch, y_batch, self.lambda_, unlabeled_batch, self.kappa)
                 llk_val += llk_val_batch
+
+                joint_llk_batch, cond_llk_batch, unlabeled_llk_batch = llk_breakdown
+                joint_llk_val += joint_llk_batch
+                cond_llk_val += cond_llk_batch
+                unlabeled_llk_val += unlabeled_llk_batch
+
                 pbar.set_description(f"{llk_val_batch.item()=:.2f}")
 
             correct_cases, total_cases = self.evaluate(valid_loader)
 
-            print(f'GMM: epoch {epoch}: train loss {llk_val}, valid accuracy {100*correct_cases/total_cases:.2f}%')
+            joint_llk_term = self.lambda_ * self.kappa * -joint_llk_val
+            cond_llk_term = (1 - self.lambda_) * -cond_llk_val
+            unlabeled_llk_term = self.lambda_ * (1 - self.kappa) * -unlabeled_llk_val
+            print(f'GMM: epoch {epoch + 1}: train loss {llk_val:.2f} ' \
+                    f'= joint {joint_llk_term:.2f} + unlabeled {unlabeled_llk_term:.2f} + cond {cond_llk_term:.2f}, ' \
+                  f'valid accuracy {100*correct_cases/total_cases:.2f}%')
 
             checkpoints.save_checkpoint(ckpt_dir_out, self.params, correct_cases/total_cases,
                     prefix=self.prefix, overwrite=True)

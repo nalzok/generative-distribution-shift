@@ -11,13 +11,12 @@ from models.autoencoder import AutoEncoderModel
 
 @click.command()
 @click.option('--embedding_dim', type=int, required=True)
-@click.option('--lr', type=float, default=1e-3)
-@click.option('--epochs', type=int, default=32)
-def train_ae(embedding_dim, lr, epochs):
-    root = '/mnt/disks/persist/torchvision/datasets'
-    ckpt_dir = '/mnt/disks/persist/generative-distribution-shift/mnist/ckpts'
-
-    train_dataset = MNIST(root, train=True, download=True, transform=np.array)
+@click.option('--ae_lr', type=float, required=True)
+@click.option('--epochs', type=int, required=True)
+@click.option('--ae_ckpt_dir', type=click.Path(), required=True)
+def train_ae(embedding_dim, ae_lr, epochs, ae_ckpt_dir):
+    root = '/home/qys/torchvision/datasets'
+    train_dataset = MNIST(root, train=True, download=False, transform=np.array)
     train_dataset, valid_dataset = random_split(train_dataset, (50000, 10000),
             generator=Generator().manual_seed(42))
 
@@ -27,9 +26,9 @@ def train_ae(embedding_dim, lr, epochs):
 
     key = jax.random.PRNGKey(42)
     specimen = jnp.empty((28, 28, 1))
-    ae = AutoEncoderModel(key, embedding_dim, lr, specimen)
+    ae = AutoEncoderModel(key, embedding_dim, ae_lr, specimen)
 
-    ae.fit(ckpt_dir, epochs, train_loader, valid_loader)
+    ae.fit(ae_ckpt_dir, epochs, train_loader, valid_loader)
 
 
 if __name__ == '__main__':

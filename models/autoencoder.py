@@ -115,7 +115,7 @@ def train_step(state, image):
             variables, image, True, mutable=['batch_stats']
         )
         loss = jnp.sum((reconstructed - image)**2)
-        return loss.sum(), new_model_state
+        return jnp.sum(loss), new_model_state
 
     (loss, new_model_state), grads = loss_fn(state.params)
 
@@ -132,7 +132,7 @@ def valid_step(state, image):
     variables = {'params': state.params, 'batch_stats': state.batch_stats}
     reconstructed = state.apply_fn(variables, image, False)
     loss = jnp.sum((reconstructed - image)**2)
-    return loss.sum()
+    return jnp.sum(loss)
 
 
 class AutoEncoderModel:
@@ -144,7 +144,7 @@ class AutoEncoderModel:
         if ckpt_dir_in is not None:
             restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.state, prefix=self.prefix)
             if restored is self.state:
-                raise ValueError(f'Cannot find checkpoint {self.prefix}_X')
+                raise ValueError(f'Cannot find checkpoint {self.prefix}X')
             self.state = restored
 
 
@@ -161,7 +161,7 @@ class AutoEncoderModel:
 
             valid_loss = self.evaluate(valid_loader)
 
-            print(f'Autoencoder: epoch {epoch}: train loss {train_loss}, valid loss {valid_loss}')
+            print(f'Autoencoder: epoch {epoch + 1}: train loss {train_loss}, valid loss {valid_loss}')
 
             checkpoints.save_checkpoint(ckpt_dir_out, self.state, -valid_loss,
                     prefix=self.prefix, overwrite=True)
