@@ -1,3 +1,4 @@
+from typing import Optional
 from functools import partial
 
 import jax
@@ -7,12 +8,13 @@ import numpy as np
 import optax
 from flax.training import checkpoints
 import torch
+from torch.utils.data import DataLoader
 
 from sklearn.mixture import GaussianMixture
 from tqdm import tqdm
 
 
-def init_params(C, K, D, R):
+def init_gmm(C, K, D, R):
     """
     Accept the same input as https://github.com/wroth8/hybrid-gmm/blob/master/models/GMMClassifier.py
 
@@ -97,6 +99,23 @@ def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
     return llk_val, params, opt_state, llk_breakdown
 
 
+@partial(jax.value_and_grad)
+def objective_unlabeled(params, unlabeled):
+    unlabeled_llk = llk_unlabeled(params, unlabeled)
+    unlabeled_llk_batch = jnp.sum(unlabeled_llk)
+
+    return -unlabeled_llk_batch
+
+
+@partial(jax.jit, static_argnums=(2,))
+def adapt_step(params, opt_state, tx, unlabeled):
+    llk_val, grads = objective_unlabeled(params, unlabeled)
+    updates, opt_state = tx.update(grads, opt_state)
+    params = optax.apply_updates(params, updates)
+
+    return llk_val, params, opt_state
+
+
 @jax.jit
 def valid_step(params, X, y):
     prior = jax.nn.softmax(params['pi_logit'])
@@ -111,75 +130,39 @@ def valid_step(params, X, y):
 
 
 class GMM:
-    def __init__(self, C, K, D, R, lr, lambda_, kappa, metadata, ckpt_dir_in = None):
+    def __init__(self, C: int, K: int, D: int, R: int, init_scheme: str, lr: float, lambda_: float, kappa: float,
+            metadata: str, ckpt_dir_in: Optional[str] = None, adapt_lr: Optional[float] = None):
         self.C = C
         self.K = K
         self.D = D
         self.R = R
+        self.init_scheme = init_scheme
         self.lambda_ = lambda_
         self.kappa = kappa
-        self.prefix = f'gmm_{metadata}_K{K}_R{R}_lr{lr}_lambda{lambda_}_kappa{kappa}_'
+        self.load_prefix = f'gmm_{metadata}_{init_scheme}_K{K}_R{R}_gmmlr{lr}_lambda{lambda_}_kappa{kappa}_'
 
-        self.params = init_params(C, K, D, R)
+        self.params = init_gmm(C, K, D, R)
         if ckpt_dir_in is not None:
-            restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.params, prefix=self.prefix)
+            restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.params, prefix=self.load_prefix)
             if restored is self.params:
-                raise ValueError(f'Cannot find checkpoint {self.prefix}_X')
+                raise ValueError(f'Cannot find checkpoint {self.load_prefix}X')
             self.params = restored
 
-        self.tx = optax.adam(learning_rate=lr)
+        self.store_prefix = self.load_prefix
+        if adapt_lr is None:
+            self.tx = optax.adam(learning_rate=lr)
+        else:
+            self.store_prefix = f'{self.load_prefix}alr{adapt_lr}_'
+            self.tx = optax.adam(learning_rate=adapt_lr)
         self.opt_state = self.tx.init(self.params)
 
 
-    def fit(self, init_scheme, ckpt_dir_out, epochs, labeled_loader, unlabeled_loader, valid_loader = None):
+    def fit(self, ckpt_dir_out: str, epochs: int, labeled_loader: DataLoader, unlabeled_loader: DataLoader,
+            valid_loader: Optional[DataLoader] = None):
         if valid_loader is None:
             valid_loader = labeled_loader
 
-        # Initialize cluster means with K-means++
-        gm = [GaussianMixture(self.K, max_iter=0, init_params='k-means++', random_state=42)
-                for _ in range(self.C)]
-        # Initialize cluster covariance with (pooled) empirical covariance matrix
-        Sigma = np.ones((self.C, self.D, self.D))
-        for X_batch, y_batch in labeled_loader:
-            for cls in range(self.C):
-                mask = y_batch == cls
-                samples = torch.sum(mask)
-                if samples >= self.K:
-                    gm[cls].fit(X_batch[mask, :])
-                if samples >= 2:
-                    # TODO: use a better heuristic
-                    weight = samples / X_batch.shape[0]
-                    Sigma[cls, :, :] = (1-weight) * Sigma[cls, :, :] + weight * np.cov(X_batch[mask, :], rowvar=False)
-
-        rng = np.random.default_rng(42)
-        mu = rng.normal(size=(self.C, self.K, self.D))
-        for cls in range(self.C):
-            if hasattr(gm[cls], 'means_'):
-                mu[cls, :, :] = gm[cls].means_
-
-        w, v = np.linalg.eigh(Sigma)
-        w = np.maximum(w, 0)                # avoid numerical issue
-        sigval = np.sqrt(w[:, -self.R:])    # numpy sorts eigenvalues in ascending order
-        S = sigval[:, np.newaxis, :] * v[:, :, -self.R:]
-        residual = Sigma - jax.vmap(jnp.matmul)(S, S.swapaxes(-1, -2))
-        S = np.repeat(S[:, np.newaxis, :, :], self.K, axis=1)
-
-        if init_scheme == 'zero':
-            Psi_softplus = np.zeros((self.C, self.D))
-        elif init_scheme == 'roth':
-            Psi_softplus = residual.diagonal(axis1=-2, axis2=-1)
-        elif init_scheme == 'full':
-            Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1)
-        elif init_scheme == 'half':
-            Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1) / 2
-        else:
-            raise ValueError(f'Unknown Initialization scheme {init_scheme}')
-
-        Psi_softplus = np.repeat(Psi_softplus[:, np.newaxis, :], self.K, axis=1)
-
-        self.params['mu'] = jnp.array(mu)
-        self.params['Psi_softplus'] = jnp.array(Psi_softplus)
-        self.params['S'] = jnp.array(S)
+        self._init_params(labeled_loader)
 
         for epoch in range(epochs):
             llk_val = 0
@@ -212,10 +195,33 @@ class GMM:
                   f'valid accuracy {100*correct_cases/total_cases:.2f}%')
 
             checkpoints.save_checkpoint(ckpt_dir_out, self.params, correct_cases/total_cases,
-                    prefix=self.prefix, overwrite=True)
+                    prefix=self.store_prefix, overwrite=True)
 
 
-    def evaluate(self, valid_loader):
+    def adapt(self, ckpt_dir_out: str, epochs: int, unlabeled_loader: DataLoader, valid_loader: Optional[DataLoader] = None):
+        for epoch in range(epochs):
+            llk_val = 0
+            pbar = tqdm(unlabeled_loader)
+            for unlabeled_batch, _ in pbar:
+                unlabeled_batch = jnp.array(unlabeled_batch)
+                llk_val_batch, self.params, self.opt_state = adapt_step(self.params, self.opt_state, self.tx, unlabeled_batch)
+                llk_val += llk_val_batch
+
+                pbar.set_description(f"{llk_val_batch.item()=:.2f}")
+
+            if valid_loader is not None:
+                correct_cases, total_cases = self.evaluate(valid_loader)
+            else:
+                correct_cases, total_cases = float('nan'), float('nan')
+
+            print(f'GMM (adapted): epoch {epoch + 1}: train loss {llk_val:.2f}, ' \
+                  f'valid accuracy {100*correct_cases/total_cases:.2f}%')
+
+            checkpoints.save_checkpoint(ckpt_dir_out, self.params, correct_cases/total_cases,
+                    prefix=self.store_prefix, overwrite=True)
+
+
+    def evaluate(self, valid_loader: DataLoader):
         correct_cases = 0
         total_cases = 0
         for X_batch, y_batch in valid_loader:
@@ -225,3 +231,60 @@ class GMM:
             total_cases += X_batch.shape[0]
 
         return correct_cases, total_cases
+
+
+    def _init_params(self, labeled_loader: DataLoader):
+        # Initialize cluster means with K-means++
+        gm = [GaussianMixture(self.K, max_iter=0, init_params='k-means++', random_state=42)
+                for _ in range(self.C)]
+
+        # Initialize cluster covariance with (pooled) empirical covariance matrix
+        class_sum = np.zeros((self.C, self.D))
+        class_outer_sum = np.zeros((self.C, self.D, self.D))
+        class_count = np.zeros(self.C)
+        for X_batch, y_batch in labeled_loader:
+            for cls in range(self.C):
+                mask = y_batch == cls
+                samples = torch.sum(mask)
+                cls_batch = X_batch[mask, :]
+
+                if samples >= self.K:
+                    gm[cls].fit(cls_batch)
+
+                class_sum[cls, :] += np.sum(cls_batch, axis=0)
+                class_outer_sum[cls] += np.sum(cls_batch[:, :, np.newaxis] * cls_batch[:, np.newaxis, :], axis=0)
+                class_count[cls] += samples
+
+        # Cov(X) = E(X^T @ X) - E(X)^T @ E(X)
+        class_mean = class_sum / class_count[:, np.newaxis]
+        Sigma = class_outer_sum / class_count[:, np.newaxis] - class_mean[:, :, np.newaxis] * class_mean[:, np.newaxis, :]
+
+        rng = np.random.default_rng(42)
+        mu = rng.normal(size=(self.C, self.K, self.D))
+        for cls in range(self.C):
+            if hasattr(gm[cls], 'means_'):
+                mu[cls, :, :] = gm[cls].means_
+
+        w, v = np.linalg.eigh(Sigma)
+        w = np.maximum(w, 0)                # avoid numerical issue
+        sigval = np.sqrt(w[:, -self.R:])    # numpy sorts eigenvalues in ascending order
+        S = sigval[:, np.newaxis, :] * v[:, :, -self.R:]
+        residual = Sigma - jax.vmap(jnp.matmul)(S, S.swapaxes(-1, -2))
+        S = np.repeat(S[:, np.newaxis, :, :], self.K, axis=1)
+
+        if self.init_scheme == 'zero':
+            Psi_softplus = np.zeros((self.C, self.D))
+        elif self.init_scheme == 'roth':
+            Psi_softplus = residual.diagonal(axis1=-2, axis2=-1)
+        elif self.init_scheme == 'full':
+            Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1)
+        elif self.init_scheme == 'half':
+            Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1) / 2
+        else:
+            raise ValueError(f'Unknown Initialization scheme {self.init_scheme}')
+
+        Psi_softplus = np.repeat(Psi_softplus[:, np.newaxis, :], self.K, axis=1)
+
+        self.params['mu'] = jnp.array(mu)
+        self.params['Psi_softplus'] = jnp.array(Psi_softplus)
+        self.params['S'] = jnp.array(S)

@@ -4,7 +4,7 @@ Jax/Flax translation of
     https://medium.com/dataseries/convolutional-autoencoder-in-pytorch-on-mnist-dataset-d65145c132ac
 """
 
-from typing import Tuple
+from typing import Optional, Tuple, Any
 from functools import partial
 
 import jax
@@ -136,9 +136,9 @@ def valid_step(state, image):
 
 
 class AutoEncoderModel:
-    def __init__(self, key, embedding_dim, lr, specimen, ckpt_dir_in = None):
+    def __init__(self, key: Any, embedding_dim: int, lr: float, specimen: jnp.ndarray, ckpt_dir_in: Optional[str] = None):
         self.state = create_train_state(key, embedding_dim, lr, specimen)
-        self.prefix = f'ae_dim{embedding_dim}_lr{lr}_'
+        self.prefix = f'ae_dim{embedding_dim}_aelr{lr}_'
         self.input_dim = specimen.shape
 
         if ckpt_dir_in is not None:
