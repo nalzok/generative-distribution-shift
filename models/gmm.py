@@ -243,16 +243,18 @@ class GMM:
         class_outer_sum = np.zeros((self.C, self.D, self.D))
         class_count = np.zeros(self.C)
         for X_batch, y_batch in labeled_loader:
+            X_batch = np.asarray(X_batch)
+            y_batch = np.asarray(y_batch)
             for cls in range(self.C):
                 mask = y_batch == cls
-                samples = torch.sum(mask)
+                samples = np.sum(mask)
                 cls_batch = X_batch[mask, :]
 
                 if samples >= self.K:
                     gm[cls].fit(cls_batch)
 
-                class_sum[cls, :] += torch.sum(cls_batch, 0)
-                class_outer_sum[cls] += torch.sum(cls_batch[:, :, np.newaxis] * cls_batch[:, np.newaxis, :], 0)
+                class_sum[cls, :] += np.sum(cls_batch, axis=0)
+                class_outer_sum[cls] += np.sum(cls_batch[:, :, np.newaxis] * cls_batch[:, np.newaxis, :], axis=0)
                 class_count[cls] += samples
 
         # Cov(X) = E(X^T @ X) - E(X)^T @ E(X)
