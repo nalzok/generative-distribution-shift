@@ -251,8 +251,8 @@ class GMM:
                 if samples >= self.K:
                     gm[cls].fit(cls_batch)
 
-                class_sum[cls, :] += np.sum(cls_batch, axis=0)
-                class_outer_sum[cls] += np.sum(cls_batch[:, :, np.newaxis] * cls_batch[:, np.newaxis, :], axis=0)
+                class_sum[cls, :] += torch.sum(cls_batch, 0)
+                class_outer_sum[cls] += torch.sum(cls_batch[:, :, np.newaxis] * cls_batch[:, np.newaxis, :], 0)
                 class_count[cls] += samples
 
         # Cov(X) = E(X^T @ X) - E(X)^T @ E(X)
