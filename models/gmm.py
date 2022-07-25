@@ -7,7 +7,6 @@ import jax.scipy as jsp
 import numpy as np
 import optax
 from flax.training import checkpoints
-import torch
 from torch.utils.data import DataLoader
 
 from sklearn.mixture import GaussianMixture
@@ -259,7 +258,7 @@ class GMM:
 
         # Cov(X) = E(X^T @ X) - E(X)^T @ E(X)
         class_mean = class_sum / class_count[:, np.newaxis]
-        Sigma = class_outer_sum / class_count[:, np.newaxis] - class_mean[:, :, np.newaxis] * class_mean[:, np.newaxis, :]
+        Sigma = class_outer_sum / class_count[:, np.newaxis, np.newaxis] - class_mean[:, :, np.newaxis] * class_mean[:, np.newaxis, :]
 
         rng = np.random.default_rng(42)
         mu = rng.normal(size=(self.C, self.K, self.D))
