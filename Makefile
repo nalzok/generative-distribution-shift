@@ -1,4 +1,4 @@
-.PHONY: mnist-gmm mnist-ae
+.PHONY: mnist-adapt mnist-gmm mnist-ae clean
 
 
 mnist-adapt:
@@ -77,3 +77,11 @@ mnist-ae:
 		'>' mnist/logs/ae/ae_dim{1}_aelr{2}.txt \
 		:::: grid/dim \
 		:::: grid/aelr
+
+
+clean:
+	-for dir in logs ckpts; do \
+		for model in ae gmm adapt; do \
+			rm -f mnist/$$dir/$$model/$$model_*; \
+		done \
+	done
