@@ -19,19 +19,19 @@ mnist-adapt:
 		--kappa {9} \
 		--gmm_ckpt_dir mnist/ckpts/gmm \
 		--adapt_lr {10} \
-		--epochs 16 \
+		--epochs 8 \
 		--adapt_ckpt_dir mnist/ckpts/adapt \
 		'>' mnist/logs/adapt/adapt_dim{1}_aelr{2}_ufactor{3}_{4}_K{5}_R{6}_gmmlr{7}_lambda{8}_kappa{9}_alr{10}.txt \
-		::: 48 \
-		::: 0.001 \
-		::: 100 \
-		::: half \
-		::: 6 \
-		::: 16 \
-		::: 1.0 \
-		::: 1.0 \
-		::: 1.0 \
-		::: 0.1
+		:::: grid/dim \
+		:::: grid/aelr \
+		:::: grid/ufactor \
+		:::: grid/init \
+		:::: grid/K \
+		:::: grid/R \
+		:::: grid/gmmlr \
+		:::: grid/lambda \
+		:::: grid/kappa \
+		:::: grid/alr
 
 
 mnist-gmm:
