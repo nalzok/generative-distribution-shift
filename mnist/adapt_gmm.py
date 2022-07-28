@@ -22,6 +22,7 @@ from models.gmm import GMM
 @click.option('--gmm_k', type=int, required=True)
 @click.option('--gmm_r', type=int, required=True)
 @click.option('--gmm_lr', type=float, required=True)
+@click.option('--gmm_marginal', type=bool, required=True)
 @click.option('--gmm_dis', type=float, required=True)
 @click.option('--gmm_un', type=float, required=True)
 @click.option('--gmm_epochs', type=int, required=True)
@@ -29,7 +30,7 @@ from models.gmm import GMM
 @click.option('--adapt_lr', type=float, required=True)
 @click.option('--adapt_epochs', type=int, required=True)
 def cli(embedder_name, embedder_dim, embedder_lr, embedder_epochs,
-        gmm_init, gmm_k, gmm_r, gmm_lr, gmm_dis, gmm_un, gmm_epochs,
+        gmm_init, gmm_k, gmm_r, gmm_lr, gmm_marginal, gmm_dis, gmm_un, gmm_epochs,
         adapt_deg, adapt_lr, adapt_epochs):
     embedder_ckpt_dir = 'mnist/ckpts/embedder'
     gmm_ckpt_dir = 'mnist/ckpts/gmm'
@@ -45,7 +46,7 @@ def cli(embedder_name, embedder_dim, embedder_lr, embedder_epochs,
     embedder.load(embedder_ckpt_dir)
 
     C, K, D, R = 10, gmm_k, embedder_dim, gmm_r
-    gmm_dummy = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedder, gmm_epochs)
+    gmm_dummy = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_marginal, gmm_dis, gmm_un, embedder, gmm_epochs)
     gmm_dummy.mark_adapt(adapt_deg, adapt_lr, adapt_epochs)
 
     with open(f'{log_dir}/{gmm_dummy.identifier}.txt', 'w') as log:
@@ -54,22 +55,22 @@ def cli(embedder_name, embedder_dim, embedder_lr, embedder_epochs,
                 print(f'gmm_r = {gmm_r} > {embedder_dim} = embedder_dim')
                 return
 
-            gmm_restored = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedder, gmm_epochs)
+            gmm_restored = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_marginal, gmm_dis, gmm_un, embedder, gmm_epochs)
             gmm_restored.load(gmm_ckpt_dir)
 
-            test_acc = gmm_restored.evaluate(test_loader)
-            print(f'Begin: test accuracy {test_acc}')
+            baseline_acc = gmm_restored.evaluate(test_loader)
+            print(f'Begin: test accuracy {baseline_acc}')
 
             gmm_restored.mark_adapt(adapt_deg, adapt_lr, adapt_epochs)
-            gmm_restored.adapt(adapt_ckpt_dir, test_loader, test_loader)
+            gmm_restored.adapt(adapt_ckpt_dir, baseline_acc, test_loader, test_loader)
             del gmm_restored
 
-            gmm_adapted = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedder, gmm_epochs)
+            gmm_adapted = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_marginal, gmm_dis, gmm_un, embedder, gmm_epochs)
             gmm_adapted.mark_adapt(adapt_deg, adapt_lr, adapt_epochs)
             gmm_adapted.load(adapt_ckpt_dir)
 
-            test_acc = gmm_adapted.evaluate(test_loader)
-            print(f'End: test accuracy {test_acc}')
+            adapted_acc = gmm_adapted.evaluate(test_loader)
+            print(f'End: test accuracy {adapted_acc}')
 
 
 def load_dataset(batch_size, rotate_deg):

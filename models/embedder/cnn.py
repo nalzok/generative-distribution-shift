@@ -134,8 +134,7 @@ class CNNModel(Embedder):
             valid_acc = self.evaluate(valid_loader)
             if best_valid_acc < valid_acc:
                 best_valid_acc = valid_acc
-                checkpoints.save_checkpoint(ckpt_dir, self.state, valid_acc,
-                        prefix=f'{self.identifier}_')
+                checkpoints.save_checkpoint(ckpt_dir, self.state, valid_acc, prefix=f'{self.identifier}_')
 
             print(f'Epoch {epoch + 1}: train loss {train_loss}, valid accuracy {valid_acc}')
 

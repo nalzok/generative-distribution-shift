@@ -16,6 +16,7 @@ mnist-adapt:
 		--gmm_k {gmm_k} \
 		--gmm_r {gmm_r} \
 		--gmm_lr {gmm_lr} \
+		--gmm_marginal {gmm_marginal} \
 		--gmm_dis {gmm_dis} \
 		--gmm_un {gmm_un} \
 		--gmm_epochs {gmm_epochs} \
@@ -30,6 +31,7 @@ mnist-adapt:
 		:::: grid/gmm_k \
 		:::: grid/gmm_r \
 		:::: grid/gmm_lr \
+		:::: grid/gmm_marginal \
 		:::: grid/gmm_dis \
 		:::: grid/gmm_un \
 		:::: grid/gmm_epochs \
@@ -59,6 +61,7 @@ mnist-gmm:
 		--gmm_k {gmm_k} \
 		--gmm_r {gmm_r} \
 		--gmm_lr {gmm_lr} \
+		--gmm_marginal {gmm_marginal} \
 		--gmm_dis {gmm_dis} \
 		--gmm_un {gmm_un} \
 		--gmm_epochs {gmm_epochs} \
@@ -70,6 +73,7 @@ mnist-gmm:
 		:::: grid/gmm_k \
 		:::: grid/gmm_r \
 		:::: grid/gmm_lr \
+		:::: grid/gmm_marginal \
 		:::: grid/gmm_dis \
 		:::: grid/gmm_un \
 		:::: grid/gmm_epochs

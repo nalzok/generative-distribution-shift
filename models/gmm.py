@@ -65,7 +65,7 @@ def llk_hybrid(params, X, y):
     marginal_llk = jsp.special.logsumexp(class_llk, b=pi, axis=-1)
     cond_llk = joint_llk - marginal_llk
 
-    return joint_llk, cond_llk
+    return joint_llk, marginal_llk, cond_llk
 
 
 def llk_unlabeled(params, unlabeled):
@@ -77,24 +77,27 @@ def llk_unlabeled(params, unlabeled):
 
 
 @partial(jax.value_and_grad, has_aux=True)
-def objective_hybrid(params, dis, un, embedding, label, unlabeled_embedding):
-    joint_llk, cond_llk = llk_hybrid(params, embedding, label)
+def objective_hybrid(params, marginal, dis, un, embedding, label, unlabeled_embedding):
+    joint_llk, marginal_llk, cond_llk = llk_hybrid(params, embedding, label)
+    gen_llk = joint_llk if not marginal else marginal_llk
+
     if un > 0:
         unlabeled_llk = llk_unlabeled(params, unlabeled_embedding)
     else:
         unlabeled_llk = jnp.zeros(unlabeled_embedding.shape[0])
 
-    joint_llk_batch = jnp.sum(joint_llk) / embedding.shape[1]
+    gen_llk_batch = jnp.sum(gen_llk) / embedding.shape[1]
     cond_llk_batch = jnp.sum(cond_llk)
     unlabeled_llk_batch = jnp.sum(unlabeled_llk) / unlabeled_embedding.shape[0] * embedding.shape[0]
-    llk = joint_llk_batch + dis * cond_llk_batch + un * unlabeled_llk_batch
 
-    return -llk, (joint_llk_batch, cond_llk_batch, unlabeled_llk_batch)
+    llk = gen_llk_batch + dis * cond_llk_batch + un * unlabeled_llk_batch
+
+    return -llk, (gen_llk_batch, cond_llk_batch, unlabeled_llk_batch)
 
 
-@partial(jax.jit, static_argnames=('tx', 'dis', 'un'))
-def train_step(params, opt_state, tx, dis, un, embedding, label, unlabeled_embedding):
-    (llk_val, llk_breakdown), grads = objective_hybrid(params, dis, un, embedding, label, unlabeled_embedding)
+@partial(jax.jit, static_argnames=('tx', 'marginal', 'dis', 'un'))
+def train_step(params, opt_state, tx, marginal, dis, un, embedding, label, unlabeled_embedding):
+    (llk_val, llk_breakdown), grads = objective_hybrid(params, marginal, dis, un, embedding, label, unlabeled_embedding)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
@@ -133,7 +136,7 @@ def valid_step(params, X, y):
 
 class GMM:
     def __init__(self, C: int, K: int, D: int, R: int,
-            init: str, lr: float, dis: float, un: float,
+            init: str, lr: float, marginal: bool, dis: float, un: float,
             embedder: Embedder, epochs: int):
         self.C = C
         self.K = K
@@ -141,6 +144,7 @@ class GMM:
         self.R = R
         self.init = init
         self.lr = lr
+        self.marginal = marginal
         self.dis = dis
         self.un = un
         self.embedder = embedder
@@ -155,7 +159,8 @@ class GMM:
 
     @property
     def identifier(self) -> str:
-        gmm_identifier = f'GMM_{self.init}_K{self.K}_R{self.R}_lr{self.lr}_dis{self.dis}_un{self.un}_epc{self.epochs}_{self.embedder.identifier}'
+        gen = 'joint' if not self.marginal else 'marginal'
+        gmm_identifier = f'GMM_{self.init}_K{self.K}_R{self.R}_lr{self.lr}_{gen}_dis{self.dis}_un{self.un}_epc{self.epochs}_{self.embedder.identifier}'
         return f'{self.adapted}{gmm_identifier}'
 
 
@@ -173,7 +178,7 @@ class GMM:
         best_valid_acc = 0
         for epoch in range(self.epochs):
             llk_val = 0
-            joint_llk_val = 0
+            gen_llk_val = 0
             cond_llk_val = 0
             unlabeled_llk_val = 0
             for X, y in train_loader:
@@ -182,23 +187,22 @@ class GMM:
                 label = jnp.array(y)
                 unlabeled_embedding = embedding   # FIXME: PLACEHOLDER
                 llk_val_batch, self.params, self.opt_state, llk_breakdown = train_step(self.params, self.opt_state, self.tx,
-                        self.dis, self.un, embedding, label, unlabeled_embedding)
-                llk_val += llk_val_batch
+                        self.marginal, self.dis, self.un, embedding, label, unlabeled_embedding)
+                gen_llk_batch, cond_llk_batch, unlabeled_llk_batch = llk_breakdown
 
-                joint_llk_batch, cond_llk_batch, unlabeled_llk_batch = llk_breakdown
-                joint_llk_val += joint_llk_batch
+                llk_val += llk_val_batch
+                gen_llk_val += gen_llk_batch
                 cond_llk_val += cond_llk_batch
                 unlabeled_llk_val += unlabeled_llk_batch
 
             valid_acc = self.evaluate(valid_loader)
             if best_valid_acc < valid_acc:
                 best_valid_acc = valid_acc
-                checkpoints.save_checkpoint(ckpt_dir, self.params, valid_acc,
-                        prefix=f'{self.identifier}_')
+                checkpoints.save_checkpoint(ckpt_dir, self.params, valid_acc, prefix=f'{self.identifier}_')
 
-            print(f'Epoch {epoch + 1}: train loss {llk_val:.2f} = gen {-joint_llk_val:.2f} ' \
-                    f'+ dis {self.dis} * {-cond_llk_val:.2f} + un {self.un} * {-unlabeled_llk_val:.2f}, ' \
-                    f'valid accuracy {valid_acc}')
+            print(f'Epoch {epoch + 1}: train loss {llk_val} = gen {-gen_llk_val} '
+                  f'+ dis {self.dis} * {-cond_llk_val} + un {self.un} * {-unlabeled_llk_val}, ' \
+                  f'valid accuracy {valid_acc}')
 
 
     def mark_adapt(self, deg: float, lr: float, epochs: int) -> None:
@@ -211,7 +215,8 @@ class GMM:
         self.adapted = f'ADAPTED_deg{deg}_lr{lr}_epc{epochs}_'
 
 
-    def adapt(self, ckpt_dir: str, unlabeled_loader: DataLoader, cheat_loader: Optional[DataLoader] = None) -> None:
+    def adapt(self, ckpt_dir: str, baseline_acc: float,
+            unlabeled_loader: DataLoader, cheat_loader: Optional[DataLoader] = None) -> None:
         for epoch in range(self.adapt_epochs):
             llk_val = 0
             for X, _ in unlabeled_loader:
@@ -225,7 +230,7 @@ class GMM:
             cheat_acc = self.evaluate(cheat_loader) if cheat_loader is not None else float('nan')
 
             print(f'Epoch {epoch + 1}: train loss {llk_val:.2f}, ' \
-                  f'cheat accuracy {cheat_acc}')
+                  f'cheat accuracy {cheat_acc}, delta {cheat_acc - baseline_acc}')
 
 
     def evaluate(self, loader: DataLoader) -> float:

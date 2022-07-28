@@ -172,8 +172,7 @@ class AutoEncoderModel(Embedder):
             valid_loss = self.evaluate(valid_loader)
             if best_valid_loss > valid_loss:
                 best_valid_loss = valid_loss
-                checkpoints.save_checkpoint(ckpt_dir, self.state, -valid_loss,
-                        prefix=f'{self.identifier}_')
+                checkpoints.save_checkpoint(ckpt_dir, self.state, -valid_loss, prefix=f'{self.identifier}_')
 
             print(f'Epoch {epoch + 1}: train loss {train_loss}, valid loss {valid_loss}')
 

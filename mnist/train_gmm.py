@@ -22,11 +22,12 @@ from models.gmm import GMM
 @click.option('--gmm_k', type=int, required=True)
 @click.option('--gmm_r', type=int, required=True)
 @click.option('--gmm_lr', type=float, required=True)
+@click.option('--gmm_marginal', type=bool, required=True)
 @click.option('--gmm_dis', type=float, required=True)
 @click.option('--gmm_un', type=float, required=True)
 @click.option('--gmm_epochs', type=int, required=True)
 def cli(embedder_name, embedder_dim, embedder_lr, embedder_epochs,
-        gmm_init, gmm_k, gmm_r, gmm_lr, gmm_dis, gmm_un, gmm_epochs):
+        gmm_init, gmm_k, gmm_r, gmm_lr, gmm_marginal, gmm_dis, gmm_un, gmm_epochs):
     embedder_ckpt_dir = 'mnist/ckpts/embedder'
     gmm_ckpt_dir = 'mnist/ckpts/gmm'
     log_dir = 'mnist/logs/gmm'
@@ -40,7 +41,7 @@ def cli(embedder_name, embedder_dim, embedder_lr, embedder_epochs,
     embedder.load(embedder_ckpt_dir)
 
     C, K, D, R = 10, gmm_k, embedder_dim, gmm_r
-    gmm = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedder, gmm_epochs)
+    gmm = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_marginal, gmm_dis, gmm_un, embedder, gmm_epochs)
 
     with open(f'{log_dir}/{gmm.identifier}.txt', 'w') as log:
         with redirect_stdout(log):
@@ -51,7 +52,7 @@ def cli(embedder_name, embedder_dim, embedder_lr, embedder_epochs,
             gmm.fit(gmm_ckpt_dir, train_loader, valid_loader)
             del gmm
 
-            gmm_restored = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedder, gmm_epochs)
+            gmm_restored = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_marginal, gmm_dis, gmm_un, embedder, gmm_epochs)
             gmm_restored.load(gmm_ckpt_dir)
 
             test_acc = gmm_restored.evaluate(test_loader)
