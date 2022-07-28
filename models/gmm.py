@@ -8,9 +8,9 @@ import numpy as np
 import optax
 from flax.training import checkpoints
 from torch.utils.data import DataLoader
-
 from sklearn.mixture import GaussianMixture
-from tqdm import tqdm
+
+from .embedder import Embedder
 
 
 def init_gmm(C, K, D, R):
@@ -77,21 +77,24 @@ def llk_unlabeled(params, unlabeled):
 
 
 @partial(jax.value_and_grad, has_aux=True)
-def objective_hybrid(params, X, y, lambda_, unlabeled, kappa):
-    joint_llk, cond_llk = llk_hybrid(params, X, y)
-    unlabeled_llk = llk_unlabeled(params, unlabeled)
+def objective_hybrid(params, dis, un, embedding, label, unlabeled_embedding):
+    joint_llk, cond_llk = llk_hybrid(params, embedding, label)
+    if un > 0:
+        unlabeled_llk = llk_unlabeled(params, unlabeled_embedding)
+    else:
+        unlabeled_llk = jnp.zeros(unlabeled_embedding.shape[0])
 
-    joint_llk_batch = jnp.sum(joint_llk) / X.shape[1]
+    joint_llk_batch = jnp.sum(joint_llk) / embedding.shape[1]
     cond_llk_batch = jnp.sum(cond_llk)
-    unlabeled_llk_batch = jnp.sum(unlabeled_llk) / unlabeled.shape[0] * X.shape[0]
-    llk = lambda_ * (kappa * joint_llk_batch + (1 - kappa) * unlabeled_llk_batch) + (1 - lambda_) * cond_llk_batch
+    unlabeled_llk_batch = jnp.sum(unlabeled_llk) / unlabeled_embedding.shape[0] * embedding.shape[0]
+    llk = joint_llk_batch + dis * cond_llk_batch + un * unlabeled_llk_batch
 
     return -llk, (joint_llk_batch, cond_llk_batch, unlabeled_llk_batch)
 
 
-@partial(jax.jit, static_argnums=(2,))
-def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
-    (llk_val, llk_breakdown), grads = objective_hybrid(params, X, y, lambda_, unlabeled, kappa)
+@partial(jax.jit, static_argnames=('tx', 'dis', 'un'))
+def train_step(params, opt_state, tx, dis, un, embedding, label, unlabeled_embedding):
+    (llk_val, llk_breakdown), grads = objective_hybrid(params, dis, un, embedding, label, unlabeled_embedding)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
@@ -99,16 +102,16 @@ def train_step(params, opt_state, tx, X, y, lambda_, unlabeled, kappa):
 
 
 @partial(jax.value_and_grad)
-def objective_unlabeled(params, unlabeled):
-    unlabeled_llk = llk_unlabeled(params, unlabeled)
+def objective_unlabeled(params, unlabeled_embedding):
+    unlabeled_llk = llk_unlabeled(params, unlabeled_embedding)
     unlabeled_llk_batch = jnp.sum(unlabeled_llk)
 
     return -unlabeled_llk_batch
 
 
-@partial(jax.jit, static_argnums=(2,))
-def adapt_step(params, opt_state, tx, unlabeled):
-    llk_val, grads = objective_unlabeled(params, unlabeled)
+@partial(jax.jit, static_argnames=('tx',))
+def adapt_step(params, opt_state, tx, unlabeled_embedding):
+    llk_val, grads = objective_unlabeled(params, unlabeled_embedding)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
@@ -129,52 +132,57 @@ def valid_step(params, X, y):
 
 
 class GMM:
-    def __init__(self, C: int, K: int, D: int, R: int, init_scheme: str, lr: float, lambda_: float, kappa: float,
-            metadata: str, ckpt_dir_in: Optional[str] = None, adapt_lr: Optional[float] = None):
+    def __init__(self, C: int, K: int, D: int, R: int,
+            init: str, lr: float, dis: float, un: float,
+            embedder: Embedder, epochs: int):
         self.C = C
         self.K = K
         self.D = D
         self.R = R
-        self.init_scheme = init_scheme
-        self.lambda_ = lambda_
-        self.kappa = kappa
-        self.load_prefix = f'gmm_{metadata}_{init_scheme}_K{K}_R{R}_gmmlr{lr}_lambda{lambda_}_kappa{kappa}_'
+        self.init = init
+        self.lr = lr
+        self.dis = dis
+        self.un = un
+        self.embedder = embedder
+        self.epochs = epochs
+        self.adapted = ''
 
         self.params = init_gmm(C, K, D, R)
-        if ckpt_dir_in is not None:
-            restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.params, prefix=self.load_prefix)
-            if restored is self.params:
-                raise ValueError(f'Cannot find checkpoint {self.load_prefix}X')
-            self.params = restored
 
-        self.store_prefix = self.load_prefix
-        if adapt_lr is None:
-            self.tx = optax.adam(learning_rate=lr)
-        else:
-            self.store_prefix = f'{self.load_prefix}alr{adapt_lr}_'
-            self.tx = optax.adam(learning_rate=adapt_lr)
+        self.tx = optax.adam(learning_rate=lr)
         self.opt_state = self.tx.init(self.params)
 
 
-    def fit(self, ckpt_dir_out: str, epochs: int, labeled_loader: DataLoader, unlabeled_loader: DataLoader,
-            valid_loader: Optional[DataLoader] = None):
-        if valid_loader is None:
-            valid_loader = labeled_loader
+    @property
+    def identifier(self) -> str:
+        gmm_identifier = f'GMM_{self.init}_K{self.K}_R{self.R}_lr{self.lr}_dis{self.dis}_un{self.un}_epc{self.epochs}_{self.embedder.identifier}'
+        return f'{self.adapted}{gmm_identifier}'
 
-        self._init_params(labeled_loader)
 
-        for epoch in range(epochs):
+    def load(self, ckpt_dir: str) -> None:
+        prefix = f'{self.identifier}_'
+        restored = checkpoints.restore_checkpoint(ckpt_dir, self.params, prefix=prefix)
+        if restored is self.params:
+            raise ValueError(f'Cannot find checkpoint {prefix}X')
+        self.params = restored
+
+
+    def fit(self, ckpt_dir: str, train_loader: DataLoader, valid_loader: DataLoader) -> None:
+        self._init_params(train_loader)
+
+        best_valid_acc = 0
+        for epoch in range(self.epochs):
             llk_val = 0
             joint_llk_val = 0
             cond_llk_val = 0
             unlabeled_llk_val = 0
-            pbar = tqdm(zip(labeled_loader, unlabeled_loader))
-            for (X_batch, y_batch), (unlabeled_batch, _) in pbar:
-                X_batch = jnp.array(X_batch)
-                y_batch = jnp.array(y_batch)
-                unlabeled_batch = jnp.array(unlabeled_batch)
+            for X, y in train_loader:
+                image = jnp.array(X)
+                embedding = self.embedder(image)
+                label = jnp.array(y)
+                unlabeled_embedding = embedding   # FIXME: PLACEHOLDER
                 llk_val_batch, self.params, self.opt_state, llk_breakdown = train_step(self.params, self.opt_state, self.tx,
-                        X_batch, y_batch, self.lambda_, unlabeled_batch, self.kappa)
+                        self.dis, self.un, embedding, label, unlabeled_embedding)
                 llk_val += llk_val_batch
 
                 joint_llk_batch, cond_llk_batch, unlabeled_llk_batch = llk_breakdown
@@ -182,57 +190,58 @@ class GMM:
                 cond_llk_val += cond_llk_batch
                 unlabeled_llk_val += unlabeled_llk_batch
 
-                pbar.set_description(f"{llk_val_batch.item()=:.2f}")
+            valid_acc = self.evaluate(valid_loader)
+            if best_valid_acc < valid_acc:
+                best_valid_acc = valid_acc
+                checkpoints.save_checkpoint(ckpt_dir, self.params, valid_acc,
+                        prefix=f'{self.identifier}_')
 
-            correct_cases, total_cases = self.evaluate(valid_loader)
-
-            joint_llk_term = self.lambda_ * self.kappa * -joint_llk_val
-            cond_llk_term = (1 - self.lambda_) * -cond_llk_val
-            unlabeled_llk_term = self.lambda_ * (1 - self.kappa) * -unlabeled_llk_val
-            print(f'GMM: epoch {epoch + 1}: train loss {llk_val:.2f} ' \
-                    f'= joint {joint_llk_term:.2f} + unlabeled {unlabeled_llk_term:.2f} + cond {cond_llk_term:.2f}, ' \
-                  f'valid accuracy {100*correct_cases/total_cases:.2f}%')
-
-            checkpoints.save_checkpoint(ckpt_dir_out, self.params, correct_cases/total_cases,
-                    prefix=self.store_prefix, overwrite=True)
+            print(f'Epoch {epoch + 1}: train loss {llk_val:.2f} = gen {-joint_llk_val:.2f} ' \
+                    f'+ dis {self.dis} * {-cond_llk_val:.2f} + un {self.un} * {-unlabeled_llk_val:.2f}, ' \
+                    f'valid accuracy {valid_acc}')
 
 
-    def adapt(self, ckpt_dir_out: str, epochs: int, unlabeled_loader: DataLoader, valid_loader: Optional[DataLoader] = None):
-        for epoch in range(epochs):
+    def mark_adapt(self, deg: float, lr: float, epochs: int) -> None:
+        self.adapt_deg = deg
+        self.adapt_lr = lr
+        self.adapt_epochs = epochs
+
+        self.tx = optax.adam(learning_rate=lr)
+        self.opt_state = self.tx.init(self.params)
+        self.adapted = f'ADAPTED_deg{deg}_lr{lr}_epc{epochs}_'
+
+
+    def adapt(self, ckpt_dir: str, unlabeled_loader: DataLoader, cheat_loader: Optional[DataLoader] = None) -> None:
+        for epoch in range(self.adapt_epochs):
             llk_val = 0
-            pbar = tqdm(unlabeled_loader)
-            for unlabeled_batch, _ in pbar:
-                unlabeled_batch = jnp.array(unlabeled_batch)
-                llk_val_batch, self.params, self.opt_state = adapt_step(self.params, self.opt_state, self.tx, unlabeled_batch)
+            for X, _ in unlabeled_loader:
+                unlabeled_image = jnp.array(X)
+                unlabeled_embedding = self.embedder(unlabeled_image)
+                llk_val_batch, self.params, self.opt_state = adapt_step(self.params, self.opt_state, self.tx, unlabeled_embedding)
                 llk_val += llk_val_batch
 
-                pbar.set_description(f"{llk_val_batch.item()=:.2f}")
+            checkpoints.save_checkpoint(ckpt_dir, self.params, epoch, prefix=f'{self.identifier}_')
 
-            if valid_loader is not None:
-                correct_cases, total_cases = self.evaluate(valid_loader)
-            else:
-                correct_cases, total_cases = float('nan'), float('nan')
+            cheat_acc = self.evaluate(cheat_loader) if cheat_loader is not None else float('nan')
 
-            print(f'GMM (adapted): epoch {epoch + 1}: train loss {llk_val:.2f}, ' \
-                  f'valid accuracy {100*correct_cases/total_cases:.2f}%')
-
-            checkpoints.save_checkpoint(ckpt_dir_out, self.params, correct_cases/total_cases,
-                    prefix=self.store_prefix, overwrite=True)
+            print(f'Epoch {epoch + 1}: train loss {llk_val:.2f}, ' \
+                  f'cheat accuracy {cheat_acc}')
 
 
-    def evaluate(self, valid_loader: DataLoader):
+    def evaluate(self, loader: DataLoader) -> float:
         correct_cases = 0
         total_cases = 0
-        for X_batch, y_batch in valid_loader:
-            X_batch = jnp.array(X_batch)
-            y_batch = jnp.array(y_batch)
-            correct_cases += valid_step(self.params, X_batch, y_batch)
-            total_cases += X_batch.shape[0]
+        for X, y in loader:
+            image = jnp.array(X)
+            embedding = self.embedder(image)
+            label = jnp.array(y)
+            correct_cases += valid_step(self.params, embedding, label)
+            total_cases += embedding.shape[0]
 
-        return correct_cases, total_cases
+        return correct_cases/total_cases
 
 
-    def _init_params(self, labeled_loader: DataLoader):
+    def _init_params(self, labeled_loader: DataLoader) -> None:
         # Initialize cluster means with K-means++
         gm = [GaussianMixture(self.K, max_iter=0, init_params='k-means++', random_state=42)
                 for _ in range(self.C)]
@@ -241,13 +250,14 @@ class GMM:
         class_sum = np.zeros((self.C, self.D))
         class_outer_sum = np.zeros((self.C, self.D, self.D))
         class_count = np.zeros(self.C)
-        for X_batch, y_batch in labeled_loader:
-            X_batch = np.asarray(X_batch)
-            y_batch = np.asarray(y_batch)
+        for X, y in labeled_loader:
+            image = jnp.array(X)
+            embedding = self.embedder(image)
+            label = jnp.array(y)
             for cls in range(self.C):
-                mask = y_batch == cls
+                mask = label == cls
                 samples = np.sum(mask)
-                cls_batch = X_batch[mask, :]
+                cls_batch = embedding[mask, :]
 
                 if samples >= self.K:
                     gm[cls].fit(cls_batch)
@@ -273,16 +283,16 @@ class GMM:
         residual = Sigma - jax.vmap(jnp.matmul)(S, S.swapaxes(-1, -2))
         S = np.repeat(S[:, np.newaxis, :, :], self.K, axis=1)
 
-        if self.init_scheme == 'zero':
+        if self.init == 'zero':
             Psi_softplus = np.zeros((self.C, self.D))
-        elif self.init_scheme == 'roth':
+        elif self.init == 'roth':
             Psi_softplus = residual.diagonal(axis1=-2, axis2=-1)
-        elif self.init_scheme == 'full':
+        elif self.init == 'full':
             Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1)
-        elif self.init_scheme == 'half':
+        elif self.init == 'half':
             Psi_softplus = Sigma.diagonal(axis1=-2, axis2=-1) / 2
         else:
-            raise ValueError(f'Unknown Initialization scheme {self.init_scheme}')
+            raise ValueError(f'Unknown Initialization scheme {self.init}')
 
         Psi_softplus = np.repeat(Psi_softplus[:, np.newaxis, :], self.K, axis=1)
 

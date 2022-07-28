@@ -126,7 +126,7 @@ class Tent:
 
             if i % report_every == 0:
                 correct_cases = self.evaluate(X_valid, y_valid)
-                print(f'Iteration {i}: train loss {llk_val}, validation accuracy {100*correct_cases/sample_size:.2f}%')
+                print(f'Iteration {i}: train loss {llk_val}, validation accuracy {correct_cases/sample_size}')
 
 
     def evaluate(self, X_valid, y_valid):

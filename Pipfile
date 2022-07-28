@@ -15,7 +15,6 @@ scikit-learn = "*"
 flax = "*"
 tensorflow-cpu = "*"
 click = "*"
-tqdm = "*"
 
 [dev-packages]
 jupyterlab = "*"

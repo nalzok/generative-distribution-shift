@@ -287,8 +287,6 @@ tags
 # End of https://www.toptal.com/developers/gitignore/api/linux,python,c,macos,vim
 
 plots/**.png
-mnist/ae.joblog
-mnist/gmm.joblog
-mnist/adapt.joblog
+mnist/*.joblog
 mnist/ckpts/**
 mnist/logs/**

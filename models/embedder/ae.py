@@ -4,7 +4,7 @@ Jax/Flax translation of
     https://medium.com/dataseries/convolutional-autoencoder-in-pytorch-on-mnist-dataset-d65145c132ac
 """
 
-from typing import Optional, Tuple, Any
+from typing import Tuple, Any
 from functools import partial
 
 import jax
@@ -14,6 +14,9 @@ import optax
 import flax
 import flax.linen as nn
 from flax.training import train_state, checkpoints
+from torch.utils.data import DataLoader
+
+from . import Embedder
 
 
 class TrainState(train_state.TrainState):
@@ -48,7 +51,7 @@ class Decoder(nn.Module):
     @nn.compact
     def __call__(self, X, training):
         H, W, _ = self.output_dim
-        H, W = H - 25, W - 25   # subtract 25 due to convolution
+        H, W = 3, 3     # TODO: don't hardcode dimension
 
         X = nn.Dense(128)(X)
         X = jax.nn.relu(X)
@@ -92,10 +95,10 @@ class AutoEncoder(nn.Module):
         return X
 
 
-def create_train_state(key, embedding_dim, learning_rate, specimen):
-    ae = AutoEncoder(embedding_dim, specimen.shape)
+def create_train_state(key, specimen, dim, lr):
+    ae = AutoEncoder(dim, specimen.shape)
     variables = ae.init(key, specimen, True)
-    tx = optax.adam(learning_rate)
+    tx = optax.adam(lr)
     state = TrainState.create(
             apply_fn=ae.apply,
             params=variables['params'],
@@ -114,7 +117,7 @@ def train_step(state, image):
         reconstructed, new_model_state = state.apply_fn(
             variables, image, True, mutable=['batch_stats']
         )
-        loss = jnp.sum((reconstructed - image)**2)
+        loss = jnp.sum((reconstructed - image)**2, axis=(-3, -2, -1))
         return jnp.sum(loss), new_model_state
 
     (loss, new_model_state), grads = loss_fn(state.params)
@@ -131,62 +134,62 @@ def train_step(state, image):
 def valid_step(state, image):
     variables = {'params': state.params, 'batch_stats': state.batch_stats}
     reconstructed = state.apply_fn(variables, image, False)
-    loss = jnp.sum((reconstructed - image)**2)
+    loss = jnp.sum((reconstructed - image)**2, axis=(-3, -2, -1))
     return jnp.sum(loss)
 
 
-class AutoEncoderModel:
-    def __init__(self, key: Any, embedding_dim: int, lr: float, specimen: jnp.ndarray, ckpt_dir_in: Optional[str] = None):
-        self.state = create_train_state(key, embedding_dim, lr, specimen)
-        self.prefix = f'ae_dim{embedding_dim}_aelr{lr}_'
-        self.input_dim = specimen.shape
+class AutoEncoderModel(Embedder):
+    def __init__(self, key: Any, specimen: jnp.ndarray, dim: int, lr: float, epochs: int) -> None:
+        self.dim = dim
+        self.lr = lr
+        self.epochs = epochs
 
-        if ckpt_dir_in is not None:
-            restored = checkpoints.restore_checkpoint(ckpt_dir_in, self.state, prefix=self.prefix)
-            if restored is self.state:
-                raise ValueError(f'Cannot find checkpoint {self.prefix}X')
-            self.state = restored
+        self.state = create_train_state(key, specimen, dim, lr)
 
 
-    def fit(self, ckpt_dir_out, epochs, train_loader, valid_loader = None):
-        if valid_loader is None:
-            valid_loader = train_loader
+    @property
+    def identifier(self) -> str:
+        return f'EMBEDDER_ae_dim{self.dim}_lr{self.lr}_epc{self.epochs}'
 
-        for epoch in range(epochs):
+
+    def load(self, ckpt_dir: str) -> None:
+        prefix = f'{self.identifier}_'
+        restored = checkpoints.restore_checkpoint(ckpt_dir, self.state, prefix=prefix)
+        if restored is self.state:
+            raise ValueError(f'Cannot find checkpoint {prefix}X')
+        self.state = restored
+
+
+    def fit(self, ckpt_dir: str, train_loader: DataLoader, valid_loader: DataLoader) -> None:
+        best_valid_loss = float('inf')
+        for epoch in range(self.epochs):
             train_loss = 0 
             for X, _ in train_loader:
-                image = jnp.array(X).reshape((-1, *self.input_dim))/255.
+                image = jnp.array(X)
                 self.state, loss = train_step(self.state, image)
                 train_loss += loss
 
             valid_loss = self.evaluate(valid_loader)
+            if best_valid_loss > valid_loss:
+                best_valid_loss = valid_loss
+                checkpoints.save_checkpoint(ckpt_dir, self.state, -valid_loss,
+                        prefix=f'{self.identifier}_')
 
-            print(f'Autoencoder: epoch {epoch + 1}: train loss {train_loss}, valid loss {valid_loss}')
-
-            checkpoints.save_checkpoint(ckpt_dir_out, self.state, -valid_loss,
-                    prefix=self.prefix, overwrite=True)
+            print(f'Epoch {epoch + 1}: train loss {train_loss}, valid loss {valid_loss}')
 
 
-    def evaluate(self, valid_loader):
-        valid_loss = 0
-        for X, _ in valid_loader:
-            image = jnp.array(X).reshape((-1, *self.input_dim))/255.
-            valid_loss += valid_step(self.state, image)
+    def evaluate(self, loader: DataLoader) -> float:
+        loss = 0
+        for X, _ in loader:
+            image = jnp.array(X)
+            loss += valid_step(self.state, image)
 
-        return valid_loss
+        return loss
 
 
     @partial(jax.jit, static_argnums=(0,))
-    def embed(self, X):
+    def __call__(self, X: jnp.ndarray) -> jnp.ndarray:
         variables = {'params': self.state.params, 'batch_stats': self.state.batch_stats}
         embedding = self.state.apply_fn(variables, X, False, method=AutoEncoder.encode)
 
         return embedding
-
-
-    @partial(jax.jit, static_argnums=(0,))
-    def reconstruct(self, X):
-        variables = {'params': self.state.params, 'batch_stats': self.state.batch_stats}
-        reconstructed = self.state.apply_fn(variables, X, False)
-
-        return reconstructed

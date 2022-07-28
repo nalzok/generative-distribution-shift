@@ -1,87 +1,110 @@
-.PHONY: mnist-adapt mnist-gmm mnist-ae clean
+.PHONY: mnist-adapt clean-mnist-adapt mnist-gmm clean-mnist-gmm mnist-embedder clean-mnist-embedder clean-mnist
 
 
 mnist-adapt:
-	parallel \
+	JAX_PLATFORM_NAME=cpu parallel \
 		--eta \
+		--header : \
 		--joblog mnist/adapt.joblog \
 		pipenv run python3 \
-		-m mnist.train_adapt \
-		--embedding_dim {1} \
-		--ae_lr {2} \
-		--ae_ckpt_dir mnist/ckpts/ae \
-		--unlabeled_factor {3} \
-		--init_scheme {4} \
-		--k {5} \
-		--r {6} \
-		--gmm_lr {7} \
-		--lambda_ {8} \
-		--kappa {9} \
-		--gmm_ckpt_dir mnist/ckpts/gmm \
-		--adapt_lr {10} \
-		--epochs 8 \
-		--adapt_ckpt_dir mnist/ckpts/adapt \
-		'>' mnist/logs/adapt/adapt_dim{1}_aelr{2}_ufactor{3}_{4}_K{5}_R{6}_gmmlr{7}_lambda{8}_kappa{9}_alr{10}.txt \
-		:::: grid/dim \
-		:::: grid/aelr \
-		:::: grid/ufactor \
-		:::: grid/init \
-		:::: grid/K \
-		:::: grid/R \
-		:::: grid/gmmlr \
-		:::: grid/lambda \
-		:::: grid/kappa \
-		:::: grid/alr
+		-m mnist.adapt_gmm \
+		--embedder_name {embedder_name} \
+		--embedder_dim {embedder_dim} \
+		--embedder_lr {embedder_lr} \
+		--embedder_epochs {embedder_epochs} \
+		--gmm_init {gmm_init} \
+		--gmm_k {gmm_k} \
+		--gmm_r {gmm_r} \
+		--gmm_lr {gmm_lr} \
+		--gmm_dis {gmm_dis} \
+		--gmm_un {gmm_un} \
+		--gmm_epochs {gmm_epochs} \
+		--adapt_deg {adapt_deg} \
+		--adapt_lr {adapt_lr} \
+		--adapt_epochs {adapt_epochs} \
+		:::: grid/embedder_name \
+		:::: grid/embedder_dim \
+		:::: grid/embedder_lr \
+		:::: grid/embedder_epochs \
+		:::: grid/gmm_init \
+		:::: grid/gmm_k \
+		:::: grid/gmm_r \
+		:::: grid/gmm_lr \
+		:::: grid/gmm_dis \
+		:::: grid/gmm_un \
+		:::: grid/gmm_epochs \
+		:::: grid/adapt_deg \
+		:::: grid/adapt_lr \
+		:::: grid/adapt_epochs
+
+
+clean-mnist-adapt:
+	for dir in logs ckpts; do \
+		rm -f mnist/$$dir/adapt/*; \
+	done
 
 
 mnist-gmm:
-	parallel \
+	JAX_PLATFORM_NAME=cpu parallel \
 		--eta \
+		--header : \
 		--joblog mnist/gmm.joblog \
 		pipenv run python3 \
 		-m mnist.train_gmm \
-		--embedding_dim {1} \
-		--ae_lr {2} \
-		--ae_ckpt_dir mnist/ckpts/ae \
-		--unlabeled_factor {3} \
-		--init_scheme {4} \
-		--k {5} \
-		--r {6} \
-		--gmm_lr {7} \
-		--lambda_ {8} \
-		--kappa {9} \
-		--epochs 8 \
-		--gmm_ckpt_dir mnist/ckpts/gmm \
-		'>' mnist/logs/gmm/gmm_dim{1}_aelr{2}_ufactor{3}_{4}_K{5}_R{6}_gmmlr{7}_lambda{8}_kappa{9}.txt \
-		:::: grid/dim \
-		:::: grid/aelr \
-		:::: grid/ufactor \
-		:::: grid/init \
-		:::: grid/K \
-		:::: grid/R \
-		:::: grid/gmmlr \
-		:::: grid/lambda \
-		:::: grid/kappa
+		--embedder_name {embedder_name} \
+		--embedder_dim {embedder_dim} \
+		--embedder_lr {embedder_lr} \
+		--embedder_epochs {embedder_epochs} \
+		--gmm_init {gmm_init} \
+		--gmm_k {gmm_k} \
+		--gmm_r {gmm_r} \
+		--gmm_lr {gmm_lr} \
+		--gmm_dis {gmm_dis} \
+		--gmm_un {gmm_un} \
+		--gmm_epochs {gmm_epochs} \
+		:::: grid/embedder_name \
+		:::: grid/embedder_dim \
+		:::: grid/embedder_lr \
+		:::: grid/embedder_epochs \
+		:::: grid/gmm_init \
+		:::: grid/gmm_k \
+		:::: grid/gmm_r \
+		:::: grid/gmm_lr \
+		:::: grid/gmm_dis \
+		:::: grid/gmm_un \
+		:::: grid/gmm_epochs
 
 
-mnist-ae:
-	parallel \
+clean-mnist-gmm:
+	for dir in logs ckpts; do \
+		rm -f mnist/$$dir/gmm/*; \
+	done
+
+
+mnist-embedder:
+	JAX_PLATFORM_NAME=cpu parallel \
 		--eta \
-		--joblog mnist/ae.joblog \
+		--header : \
+		--joblog mnist/embedder.joblog \
 		pipenv run python3 \
-		-m mnist.train_ae \
-		--embedding_dim {1} \
-		--ae_lr {2} \
-		--epochs 32 \
-		--ae_ckpt_dir mnist/ckpts/ae \
-		'>' mnist/logs/ae/ae_dim{1}_aelr{2}.txt \
-		:::: grid/dim \
-		:::: grid/aelr
+		-m mnist.train_embedder \
+		--embedder_name {embedder_name} \
+		--embedder_dim {embedder_dim} \
+		--embedder_lr {embedder_lr} \
+		--embedder_epochs {embedder_epochs} \
+		:::: grid/embedder_name \
+		:::: grid/embedder_dim \
+		:::: grid/embedder_lr \
+		:::: grid/embedder_epochs
+
+
+clean-mnist-embedder:
+	for dir in logs ckpts; do \
+		rm -f mnist/$$dir/embedder/*; \
+	done
 
 
 clean:
-	-for dir in logs ckpts; do \
-		for model in ae gmm adapt; do \
-			rm -f mnist/$$dir/$$model/$$model_*; \
-		done \
-	done
+	clean-embedder
+	clean-gmm
+	clean-adapt
