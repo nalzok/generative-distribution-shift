@@ -1,13 +1,13 @@
-.PHONY: mnist-adapt clean-mnist-adapt mnist-gmm clean-mnist-gmm mnist-embedder clean-mnist-embedder clean-mnist
+.PHONY: adapt clean-adapt gmm clean-gmm embeddings clean-embeddings clean
 
 
-mnist-adapt:
+adapt:
 	JAX_PLATFORM_NAME=cpu parallel \
 		--eta \
 		--header : \
-		--joblog mnist/adapt.joblog \
+		--joblog tta/adapt.joblog \
 		pipenv run python3 \
-		-m mnist.adapt_gmm \
+		-m tta.adapt_gmm \
 		--embedder_name {embedder_name} \
 		--embedder_dim {embedder_dim} \
 		--embedder_lr {embedder_lr} \
@@ -38,19 +38,19 @@ mnist-adapt:
 		:::: grid/adapt_epochs
 
 
-clean-mnist-adapt:
+clean-adapt:
 	for dir in logs ckpts; do \
-		rm -f mnist/$$dir/adapt/*; \
+		rm -f tta/$$dir/adapt/*; \
 	done
 
 
-mnist-gmm:
+gmm:
 	JAX_PLATFORM_NAME=cpu parallel \
 		--eta \
 		--header : \
-		--joblog mnist/gmm.joblog \
+		--joblog tta/gmm.joblog \
 		pipenv run python3 \
-		-m mnist.train_gmm \
+		-m tta.train_gmm \
 		--embedder_name {embedder_name} \
 		--embedder_dim {embedder_dim} \
 		--embedder_lr {embedder_lr} \
@@ -75,36 +75,32 @@ mnist-gmm:
 		:::: grid/gmm_epochs
 
 
-clean-mnist-gmm:
+clean-gmm:
 	for dir in logs ckpts; do \
-		rm -f mnist/$$dir/gmm/*; \
+		rm -f tta/$$dir/gmm/*; \
 	done
 
 
-mnist-embedder:
-	JAX_PLATFORM_NAME=cpu parallel \
+embeddings:
+	parallel \
 		--eta \
 		--header : \
-		--joblog mnist/embedder.joblog \
 		pipenv run python3 \
-		-m mnist.train_embedder \
-		--embedder_name {embedder_name} \
-		--embedder_dim {embedder_dim} \
-		--embedder_lr {embedder_lr} \
-		--embedder_epochs {embedder_epochs} \
-		:::: grid/embedder_name \
-		:::: grid/embedder_dim \
-		:::: grid/embedder_lr \
-		:::: grid/embedder_epochs
+		-m embed.transformer \
+		--dataset_name {dataset_name} \
+		--model_name 'facebook/vit-mae-base' \
+		--global_pool {embedding_global_pool} \
+		--mask_ratio {embedding_mask_ratio} \
+		:::: grid/dataset_name \
+		:::: grid/embedding_global_pool \
+		:::: grid/embedding_mask_ratio
 
 
-clean-mnist-embedder:
-	for dir in logs ckpts; do \
-		rm -f mnist/$$dir/embedder/*; \
-	done
+clean-embeddings:
+	rm -rf data
 
 
 clean:
-	clean-embedder
+	clean-embeddings
 	clean-gmm
 	clean-adapt
