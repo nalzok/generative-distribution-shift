@@ -290,3 +290,4 @@ tta/*.joblog
 tta/ckpts/**
 tta/logs/**
 data/**
+embed/joblog

@@ -85,19 +85,22 @@ embeddings:
 	parallel \
 		--eta \
 		--header : \
+		--jobs 2 \
+		--joblog embed/joblog \
 		pipenv run python3 \
 		-m embed.transformer \
-		--dataset_name {dataset_name} \
-		--model_name 'facebook/vit-mae-base' \
+		--split {embedding_split} \
+		--model {embedding_model} \
 		--global_pool {embedding_global_pool} \
 		--mask_ratio {embedding_mask_ratio} \
-		:::: grid/dataset_name \
+		:::: grid/embedding_split \
+		:::: grid/embedding_model \
 		:::: grid/embedding_global_pool \
 		:::: grid/embedding_mask_ratio
 
 
 clean-embeddings:
-	rm -rf data
+	rm -rf data/embeddings
 
 
 clean:
