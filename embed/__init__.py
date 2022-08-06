@@ -11,4 +11,5 @@ class EmbeddingConfig:
 
     def __str__(self):
         config = asdict(self)
-        return quote(dumps(config, sort_keys=True, separators=(',', ':')), safe='')
+        config_string = quote(dumps(config, sort_keys=True, separators=(',', ':')), safe='')
+        return f'EMBEDDING_{config_string}'

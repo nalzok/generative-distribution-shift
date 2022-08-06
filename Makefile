@@ -39,9 +39,8 @@ adapt:
 
 
 clean-adapt:
-	for dir in logs ckpts; do \
-		rm -f tta/$$dir/adapt/*; \
-	done
+	rm -f logs/adapt/*
+	rm -f ckpts/adapt/*
 
 
 gmm:
@@ -51,10 +50,9 @@ gmm:
 		--joblog tta/gmm.joblog \
 		pipenv run python3 \
 		-m tta.train_gmm \
-		--embedder_name {embedder_name} \
-		--embedder_dim {embedder_dim} \
-		--embedder_lr {embedder_lr} \
-		--embedder_epochs {embedder_epochs} \
+		--embedding_model {embedding_model} \
+		--embedding_global_pool {embedding_global_pool} \
+		--embedding_mask_ratio {embedding_mask_ratio} \
 		--gmm_init {gmm_init} \
 		--gmm_k {gmm_k} \
 		--gmm_r {gmm_r} \
@@ -62,10 +60,9 @@ gmm:
 		--gmm_dis {gmm_dis} \
 		--gmm_un {gmm_un} \
 		--gmm_epochs {gmm_epochs} \
-		:::: grid/embedder_name \
-		:::: grid/embedder_dim \
-		:::: grid/embedder_lr \
-		:::: grid/embedder_epochs \
+		:::: grid/embedding_model \
+		:::: grid/embedding_global_pool \
+		:::: grid/embedding_mask_ratio \
 		:::: grid/gmm_init \
 		:::: grid/gmm_k \
 		:::: grid/gmm_r \
@@ -76,9 +73,8 @@ gmm:
 
 
 clean-gmm:
-	for dir in logs ckpts; do \
-		rm -f tta/$$dir/gmm/*; \
-	done
+	rm -f logs/gmm/*
+	rm -f ckpts/gmm/*
 
 
 embeddings:
@@ -100,7 +96,7 @@ embeddings:
 
 
 clean-embeddings:
-	rm -rf data/embeddings
+	rm -rf data/embeddings/*
 
 
 clean:

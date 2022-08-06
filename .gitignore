@@ -286,8 +286,8 @@ tags
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,python,c,macos,vim
 
-tta/*.joblog
-tta/ckpts/**
-tta/logs/**
+ckpts/**
+logs/**
 data/**
+tta/*.joblog
 embed/joblog

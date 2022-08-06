@@ -10,7 +10,7 @@ from flax.training import checkpoints
 from torch.utils.data import DataLoader
 from sklearn.mixture import GaussianMixture
 
-from .embedder import Embedder
+from embed import EmbeddingConfig
 
 
 def init_gmm(C, K, D, R):
@@ -136,7 +136,7 @@ def valid_step(params, X, y):
 class GMM:
     def __init__(self, C: int, K: int, D: int, R: int,
             init: str, lr: float, dis: float, un: float,
-            embedder: Embedder, epochs: int):
+            embedding_config: EmbeddingConfig, epochs: int):
         self.C = C
         self.K = K
         self.D = D
@@ -145,7 +145,7 @@ class GMM:
         self.lr = lr
         self.dis = dis
         self.un = un
-        self.embedder = embedder
+        self.embedding_config = embedding_config
         self.epochs = epochs
         self.adapted = ''
 
@@ -157,7 +157,7 @@ class GMM:
 
     @property
     def identifier(self) -> str:
-        gmm_identifier = f'GMM_{self.init}_K{self.K}_R{self.R}_lr{self.lr}_dis{self.dis}_un{self.un}_epc{self.epochs}_{self.embedder.identifier}'
+        gmm_identifier = f'GMM_{self.init}_K{self.K}_R{self.R}_lr{self.lr}_dis{self.dis}_un{self.un}_epc{self.epochs}_{self.embedding_config}'
         return f'{self.adapted}{gmm_identifier}'
 
 
@@ -179,8 +179,7 @@ class GMM:
             cond_llk_val = 0
             unlabeled_llk_val = 0
             for X, y in train_loader:
-                image = jnp.array(X)
-                embedding = self.embedder(image)
+                embedding = jnp.array(X)
                 label = jnp.array(y)
                 unlabeled_embedding = embedding   # FIXME: PLACEHOLDER
                 llk_val_batch, self.params, self.opt_state, llk_breakdown = train_step(self.params, self.opt_state, self.tx,
@@ -217,8 +216,7 @@ class GMM:
         for epoch in range(self.adapt_epochs):
             llk_val = 0
             for X, _ in unlabeled_loader:
-                unlabeled_image = jnp.array(X)
-                unlabeled_embedding = self.embedder(unlabeled_image)
+                unlabeled_embedding = jnp.array(X)
                 llk_val_batch, self.params, self.opt_state = adapt_step(self.params, self.opt_state, self.tx, unlabeled_embedding)
                 llk_val += llk_val_batch
 
@@ -234,8 +232,7 @@ class GMM:
         correct_cases = 0
         total_cases = 0
         for X, y in loader:
-            image = jnp.array(X)
-            embedding = self.embedder(image)
+            embedding = jnp.array(X)
             label = jnp.array(y)
             correct_cases += valid_step(self.params, embedding, label)
             total_cases += embedding.shape[0]
@@ -253,8 +250,7 @@ class GMM:
         class_outer_sum = np.zeros((self.C, self.D, self.D))
         class_count = np.zeros(self.C)
         for X, y in labeled_loader:
-            image = jnp.array(X)
-            embedding = self.embedder(image)
+            embedding = jnp.array(X)
             label = jnp.array(y)
             for cls in range(self.C):
                 mask = label == cls
