@@ -8,10 +8,9 @@ adapt:
 		--joblog tta/adapt.joblog \
 		pipenv run python3 \
 		-m tta.adapt_gmm \
-		--embedder_name {embedder_name} \
-		--embedder_dim {embedder_dim} \
-		--embedder_lr {embedder_lr} \
-		--embedder_epochs {embedder_epochs} \
+		--embedding_model {embedding_model} \
+		--embedding_global_pool {embedding_global_pool} \
+		--embedding_mask_ratio {embedding_mask_ratio} \
 		--gmm_init {gmm_init} \
 		--gmm_k {gmm_k} \
 		--gmm_r {gmm_r} \
@@ -19,7 +18,8 @@ adapt:
 		--gmm_dis {gmm_dis} \
 		--gmm_un {gmm_un} \
 		--gmm_epochs {gmm_epochs} \
-		--adapt_deg {adapt_deg} \
+		--adapt_corruption {adapt_corruption} \
+		--adapt_severity {adapt_severity} \
 		--adapt_lr {adapt_lr} \
 		--adapt_epochs {adapt_epochs} \
 		:::: grid/embedder_name \
@@ -33,7 +33,8 @@ adapt:
 		:::: grid/gmm_dis \
 		:::: grid/gmm_un \
 		:::: grid/gmm_epochs \
-		:::: grid/adapt_deg \
+		:::: grid/adapt_corruption \
+		:::: grid/adapt_severity \
 		:::: grid/adapt_lr \
 		:::: grid/adapt_epochs
 

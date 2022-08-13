@@ -29,9 +29,11 @@ def load_embeddings(split: str, severity: Optional[int], config: EmbeddingConfig
         if severity is None:
             raise ValueError(f'Must specify a severity level for {split}')
         embeddings = torch.load(tensor_path)
+        labels = torch.as_tensor(np.load('data/pixels/CIFAR-10-C/labels.npy'))
+
         num_images = embeddings.shape[0] // 5
         embeddings = embeddings[(severity - 1) * num_images:severity * num_images]
-        labels = torch.as_tensor(np.load('data/pixels/CIFAR-10-C/labels.npy'))
+        labels = labels[(severity - 1) * num_images:severity * num_images]
 
     ds = TensorDataset(embeddings, labels)
     return ds

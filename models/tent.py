@@ -110,7 +110,7 @@ def test_step(state, image, label):
     return state, loss, accuracy
 
 
-class Tent:
+class MLP:
     def __init__(self, key, num_classes, lr, tent_lr, specimen):
         self.state = create_train_state(key, num_classes, lr, tent_lr, specimen)
 

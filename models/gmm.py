@@ -201,14 +201,15 @@ class GMM:
                   f'valid accuracy {valid_acc}')
 
 
-    def mark_adapt(self, deg: float, lr: float, epochs: int) -> None:
-        self.adapt_deg = deg
+    def mark_adapt(self, corruption: str, severity: int, lr: float, epochs: int) -> None:
+        self.adapt_corruption = corruption
+        self.adapt_severity = severity
         self.adapt_lr = lr
         self.adapt_epochs = epochs
 
         self.tx = optax.adam(learning_rate=lr)
         self.opt_state = self.tx.init(self.params)
-        self.adapted = f'ADAPTED_deg{deg}_lr{lr}_epc{epochs}_'
+        self.adapted = f'ADAPTED_{corruption.replace("_", "+")}_sev{severity}_lr{lr}_epc{epochs}_'
 
 
     def adapt(self, ckpt_dir: str, baseline_acc: float,
