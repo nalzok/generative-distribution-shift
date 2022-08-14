@@ -23,7 +23,6 @@ adapt:
 		--adapt_algo {adapt_algo} \
 		--adapt_lr {adapt_lr} \
 		--adapt_epochs {adapt_epochs} \
-		:::: grid/embedder_name \
 		:::: grid/embedder_dim \
 		:::: grid/embedder_lr \
 		:::: grid/embedder_epochs \
