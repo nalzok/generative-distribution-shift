@@ -23,9 +23,9 @@ adapt:
 		--adapt_algo {adapt_algo} \
 		--adapt_lr {adapt_lr} \
 		--adapt_epochs {adapt_epochs} \
-		:::: grid/embedder_dim \
-		:::: grid/embedder_lr \
-		:::: grid/embedder_epochs \
+		:::: grid/embedding_model \
+		:::: grid/embedding_global_pool \
+		:::: grid/embedding_mask_ratio \
 		:::: grid/gmm_init \
 		:::: grid/gmm_k \
 		:::: grid/gmm_r \
