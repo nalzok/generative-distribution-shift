@@ -21,11 +21,12 @@ from models.gmm import GMM
 @click.option('--gmm_epochs', type=int, required=True)
 @click.option('--adapt_corruption', type=str, required=True)
 @click.option('--adapt_severity', type=int, required=True)
+@click.option('--adapt_algo', type=str, required=True)
 @click.option('--adapt_lr', type=float, required=True)
 @click.option('--adapt_epochs', type=int, required=True)
 def cli(embedding_model, embedding_global_pool, embedding_mask_ratio,
         gmm_init, gmm_k, gmm_r, gmm_lr, gmm_dis, gmm_un, gmm_epochs,
-        adapt_corruption, adapt_severity, adapt_lr, adapt_epochs):
+        adapt_corruption, adapt_severity, adapt_algo, adapt_lr, adapt_epochs):
     gmm_ckpt_dir = 'ckpts/gmm'
     adapt_ckpt_dir = 'ckpts/adapt'
     log_dir = 'logs/adapt'
@@ -36,7 +37,7 @@ def cli(embedding_model, embedding_global_pool, embedding_mask_ratio,
 
     C, K, D, R = 10, gmm_k, embedding_dim, gmm_r
     gmm_dummy = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedding_config, gmm_epochs)
-    gmm_dummy.mark_adapt(adapt_corruption, adapt_severity, adapt_lr, adapt_epochs)
+    gmm_dummy.mark_adapt(adapt_corruption, adapt_severity, adapt_algo, adapt_lr, adapt_epochs)
 
     with open(f'{log_dir}/{gmm_dummy.identifier}.txt', 'w') as log:
         with redirect_stdout(log):
@@ -50,12 +51,12 @@ def cli(embedding_model, embedding_global_pool, embedding_mask_ratio,
             baseline_acc = gmm_restored.evaluate(shift_loader)
             print(f'Begin: test accuracy {baseline_acc}')
 
-            gmm_restored.mark_adapt(adapt_corruption, adapt_severity, adapt_lr, adapt_epochs)
+            gmm_restored.mark_adapt(adapt_corruption, adapt_severity, adapt_algo, adapt_lr, adapt_epochs)
             gmm_restored.adapt(adapt_ckpt_dir, baseline_acc, shift_loader, shift_loader)
             del gmm_restored
 
             gmm_adapted = GMM(C, K, D, R, gmm_init, gmm_lr, gmm_dis, gmm_un, embedding_config, gmm_epochs)
-            gmm_adapted.mark_adapt(adapt_corruption, adapt_severity, adapt_lr, adapt_epochs)
+            gmm_adapted.mark_adapt(adapt_corruption, adapt_severity, adapt_algo, adapt_lr, adapt_epochs)
             gmm_adapted.load(adapt_ckpt_dir)
 
             adapted_acc = gmm_adapted.evaluate(shift_loader)

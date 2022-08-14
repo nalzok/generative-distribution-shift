@@ -20,6 +20,7 @@ adapt:
 		--gmm_epochs {gmm_epochs} \
 		--adapt_corruption {adapt_corruption} \
 		--adapt_severity {adapt_severity} \
+		--adapt_algo {adapt_algo} \
 		--adapt_lr {adapt_lr} \
 		--adapt_epochs {adapt_epochs} \
 		:::: grid/embedder_name \
@@ -35,6 +36,7 @@ adapt:
 		:::: grid/gmm_epochs \
 		:::: grid/adapt_corruption \
 		:::: grid/adapt_severity \
+		:::: grid/adapt_algo \
 		:::: grid/adapt_lr \
 		:::: grid/adapt_epochs
 

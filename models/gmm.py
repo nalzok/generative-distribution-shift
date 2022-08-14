@@ -112,7 +112,7 @@ def objective_unlabeled(params, unlabeled_embedding):
 
 
 @partial(jax.jit, static_argnames=('tx',))
-def adapt_step(params, opt_state, tx, unlabeled_embedding):
+def adapt_step_gen(params, opt_state, tx, unlabeled_embedding):
     llk_val, grads = objective_unlabeled(params, unlabeled_embedding)
     updates, opt_state = tx.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
@@ -120,16 +120,38 @@ def adapt_step(params, opt_state, tx, unlabeled_embedding):
     return llk_val, params, opt_state
 
 
-@jax.jit
-def valid_step(params, X, y):
+def log_posterior(params, embedding):
     prior = jax.nn.softmax(params['pi_logit'])
-    class_llk = llk_class(params, X)
+    class_llk = llk_class(params, embedding)
 
-    log_posterior = jnp.log(prior) + class_llk
-    log_posterior -= jsp.special.logsumexp(class_llk, b=prior, axis=-1, keepdims=True)  # normalize
+    log_post = jnp.log(prior) + class_llk
+    log_post -= jsp.special.logsumexp(class_llk, b=prior, axis=-1, keepdims=True)  # normalize
 
-    predictions = jnp.argmax(log_posterior, axis=-1)
-    correct_cases = jnp.sum(predictions == y)
+    return log_post
+
+
+@partial(jax.jit, static_argnames=('tx',))
+def adapt_step_tent(params, opt_state, tx, unlabeled_embedding):
+    @jax.value_and_grad
+    def entropy_fn(p):
+        log_post = log_posterior(p, unlabeled_embedding)
+        post = jnp.exp(log_post)
+        entropy = jnp.sum(post * log_post, axis=-1)
+        return jnp.sum(entropy)
+
+    entropy, tent_grads = entropy_fn(params)
+    updates, opt_state = tx.update(tent_grads, opt_state)
+    params = optax.apply_updates(params, updates)
+
+    return entropy, params, opt_state
+
+
+@jax.jit
+def valid_step(params, embedding, label):
+    log_post = log_posterior(params, embedding)
+
+    prediction = jnp.argmax(log_post, axis=-1)
+    correct_cases = jnp.sum(prediction == label)
     return correct_cases
 
 
@@ -201,19 +223,27 @@ class GMM:
                   f'valid accuracy {valid_acc}')
 
 
-    def mark_adapt(self, corruption: str, severity: int, lr: float, epochs: int) -> None:
+    def mark_adapt(self, corruption: str, severity: int, algo: str, lr: float, epochs: int) -> None:
         self.adapt_corruption = corruption
         self.adapt_severity = severity
+        self.adapt_algo = algo
         self.adapt_lr = lr
         self.adapt_epochs = epochs
 
         self.tx = optax.adam(learning_rate=lr)
         self.opt_state = self.tx.init(self.params)
-        self.adapted = f'ADAPTED_{corruption.replace("_", "+")}_sev{severity}_lr{lr}_epc{epochs}_'
+        self.adapted = f'ADAPTED_{algo}_{corruption.replace("_", "+")}_sev{severity}_lr{lr}_epc{epochs}_'
 
 
     def adapt(self, ckpt_dir: str, baseline_acc: float,
             unlabeled_loader: DataLoader, test_loader: Optional[DataLoader] = None) -> None:
+        if self.adapt_algo == 'gen':
+            adapt_step = adapt_step_gen
+        elif self.adapt_algo == 'tent':
+            adapt_step = adapt_step_tent
+        else:
+            raise ValueError(f'Unknown adaptation algorithm {self.adapt_algo}')
+
         for epoch in range(self.adapt_epochs):
             llk_val = 0
             for X, _ in unlabeled_loader:
