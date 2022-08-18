@@ -1,6 +1,9 @@
-## TODO
+## Notice
 
-+ Perform grid search on MNIST to figure out the optimal hyperparameters
-    + Currently the best performance is achieved by `gmm_dim48_aelr0.001_ufactor100_K6_R16_lr1_lambda0.25_kappa0.75.txt` with 94.35% validation accuracy
-+ Simulate distribution shift by clipping and/or rotate the digits
-+ Try TTA and see if that helps
+This idea doesn't seem to work: its fails to beat Tent on CIFAT-10-C.
+I'll probably revisit it later, but for now, we've moved on to another idea.
+
+TODO:
+    + Fine-tune the feature extractor in an end-to-end fashion with a GMM classification head, so that the embeddings do have a Gaussian mixture distribution.
+    + Do the experiments on WILDS, which has more "typical" distribution shifts.
+    + Try a larger/finer grid search for the hyperparameters.
